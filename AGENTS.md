@@ -20,7 +20,7 @@ Never create branches, worktrees, or commits automatically. Only do so when the 
 
 ## Database rules
 
-Apply schema changes only with `bun db:push` (`drizzle-kit push`). Never generate, write, or run migrations (no `drizzle-kit generate`, `drizzle-kit migrate`, or hand-written SQL migration files). The schema in `lib/db/schema.ts` is the single source of truth.
+Apply schema changes only with `bun db:push` (`drizzle-kit push`). Never generate, write, or run migrations (no `drizzle-kit generate`, `drizzle-kit migrate`, or hand-written SQL migration files). The schema in `db/schema.ts` is the single source of truth.
 
 This is a development project. There is no backward compatibility and the data is worthless. Prefer data loss: never backfill, migrate, or preserve existing rows, and never spend effort on keeping old data working. Every schema change means a clean state.
 
