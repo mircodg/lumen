@@ -26,6 +26,55 @@ This is a development project. There is no backward compatibility and the data i
 
 <!-- END:database-agent-rules -->
 
+<!-- BEGIN:forms-agent-rules -->
+
+## Form rules
+
+Reference implementations: `components/bot-dialog.tsx` (dialog form + server action) and `components/auth/auth-form.tsx` (card form + auth client).
+
+### Validation schemas
+
+- Derive insert schemas from the Drizzle table with `drizzle-zod` (`createInsertSchema`) in `db/schema.ts`, next to the table. Never hand-write a zod object that duplicates table columns.
+- Add field rules (trim, min, max, messages) through the `createInsertSchema` refine callbacks, e.g. `name: (s) => s.trim().min(1, "Give your bot a name.")`.
+- Export a separate per-form schema (e.g. `createBotSchema`) that contains only the fields the user fills in. Never accept ids, owner ids (`userId`), or timestamps from the client.
+- The form schema's input type must match the form's `defaultValues` exactly, or TanStack Form rejects it as a validator. Columns with `$defaultFn` come out optional and nullable columns come out nullable, so `.unwrap()` them with `.extend()` when the form always sends a value.
+- Export the input type with `z.input<typeof schema>` and use it as the server action's parameter type.
+
+### Server actions
+
+- Put server actions in `actions/<entity>.ts` with `"use server"` at the top. These files may export only async functions, so schemas and types live in `db/schema.ts`.
+- Every action: check the session with `auth.getSession()` from `@/lib/auth/server`, then validate again with the same schema via `safeParse` (never trust client validation), then set server-owned fields (`userId: session.user.id`).
+- Return a discriminated result, `{ ok: true, ... } | { ok: false, error: string }`. Don't throw for expected failures. Format validation errors with `z.prettifyError`.
+- Wrap DB writes in try/catch, log the real error with `console.error`, and return a user-safe message.
+- Normalize empty optional strings to `null` before inserting.
+- Call `refresh()` from `next/cache` after a mutation so the page shows the new data.
+
+### Client forms (TanStack Form + zod)
+
+- Use `useForm` from `@tanstack/react-form` with `validators: { onSubmit: schema }`. Pass the zod schema directly (Standard Schema), not a custom adapter.
+- `<form noValidate onSubmit={(e) => { e.preventDefault(); form.handleSubmit(); }}>`.
+- Call the server action from `onSubmit` and show results with `toast.add({ type: "success" | "error", title, description })` from `@/components/ui/toast`. Catch thrown errors and show a network error toast.
+- Read pending state with `<form.Subscribe selector={(s) => s.isSubmitting}>` and disable every control and button while pending.
+- Render each field with `<form.Field name="...">`. Compute `isInvalid = field.state.meta.isTouched && !field.state.meta.isValid` and render errors with `<FieldError errors={field.state.meta.errors} />`.
+- Use programmatic updates (`form.setFieldValue`, `field.handleChange`) for presets, shuffles, and similar helper buttons. Give every non-submit button `type="button"`.
+
+### Layout (shadcn)
+
+- Compose forms with `FieldGroup` > `Field` > `FieldLabel` + control + `FieldError`. No raw `div`/`Label` stacks and no `space-y-*`.
+- Validation state goes on both sides: `data-invalid={isInvalid}` on `Field`, `aria-invalid={isInvalid}` on the control. Disabled state: `data-disabled` on `Field`, `disabled` on the control.
+- Link labels and controls with `htmlFor={field.name}` / `id={field.name}`, and set `autoComplete` deliberately.
+- Submit buttons show `<Spinner data-icon="inline-start" />` while pending. Button has no loading prop.
+- Use `Item` (`ItemMedia`, `ItemContent`, `ItemActions`) for a row with media, text, and an action, e.g. an avatar picker.
+
+### Forms in dialogs
+
+- Make the dialog controlled (`open` / `onOpenChange`) so the form can close it on success.
+- Render the form as its own component inside `DialogContent`. It mounts only while the dialog is open, so each open starts with fresh defaults (including random values like `nanoid()`) without a manual `form.reset()`.
+- Put actions in `DialogFooter` inside the `<form>`: Cancel as `<DialogClose render={<Button type="button" variant="outline" />}>`, then the submit `Button`.
+- Accept the trigger as a `trigger: React.ReactElement` prop and render `<DialogTrigger render={trigger} />`, so server component pages can pass their own button without becoming client components.
+
+<!-- END:forms-agent-rules -->
+
 <!-- VERCEL BEST PRACTICES START -->
 ## Best practices for developing on Vercel
 
@@ -50,3 +99,48 @@ These defaults are optimized for AI coding agents (and humans) working on apps t
   needed. Always curl https://ai-gateway.vercel.sh/v1/models first; never trust model IDs from memory
 - For durable agent loops or untrusted code: use Workflow (pause/resume/state) + Sandbox; use Vercel MCP for secure infra access
 <!-- VERCEL BEST PRACTICES END -->
+
+<!-- DICEBEAR BEST PRACTICES START -->
+## DiceBear
+
+Use DiceBear 10. Documentation: https://www.dicebear.com/llms.txt
+
+There are seven native cores with identical output, not one library with
+wrappers. Use the one matching this project's language. Do not reach for the
+JavaScript core when the project is written in something else:
+
+    JavaScript  @dicebear/core + @dicebear/styles
+    PHP         dicebear/core + dicebear/styles
+    Python      dicebear-core + dicebear-styles
+    Rust        dicebear-core + dicebear-styles
+    Go          github.com/dicebear/dicebear-go/v10 + github.com/dicebear/styles/v10
+    Dart        dicebear_core + dicebear_styles
+    C#          DiceBear.Core + DiceBear.Styles
+
+Every style page carries a loading snippet for all seven, for example
+https://www.dicebear.com/styles/lorelei/index.md
+
+HTTP API: https://api.dicebear.com/10.x/<style>/svg?seed=<seed> The seed is a
+query parameter, not a path segment. Options are query parameters too; array
+values are separated by commas.
+
+Options named after a component end in Variant: eyesVariant, not eyes. This
+holds in all seven cores and in the HTTP API. Look up the options of a style at
+https://api.dicebear.com/10.x/<style>/options.json
+
+Write these forms, not the ones on the left. The left column is pre-10 and the
+API does not reject it, so an outdated call runs and silently does the wrong
+thing:
+
+    avatars.dicebear.com/api/<style>/<seed>.svg  ->  api.dicebear.com/10.x/<style>/svg?seed=<seed>
+    api.dicebear.com/9.x/<style>/svg             ->  api.dicebear.com/10.x/<style>/svg
+    npm install @dicebear/collection             ->  npm install @dicebear/styles
+    npm install @dicebear/lorelei                ->  npm install @dicebear/styles
+    createAvatar(lorelei, { seed })              ->  new Avatar(new Style(definition), { seed })
+    { eyes: ['variant01'] }                      ->  { eyesVariant: ['variant01'] }
+    ?radius=50                                   ->  ?borderRadius=50
+
+Only JavaScript and the HTTP API have a pre-10 form. The other six cores were
+released in 2026 and never had one, so any older-looking PHP, Python, Rust, Go,
+Dart or C# API attributed to DiceBear is invented rather than outdated.
+<!-- DICEBEAR BEST PRACTICES END -->
