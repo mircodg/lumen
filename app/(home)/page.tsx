@@ -13,6 +13,7 @@ import {
 	EmptyTitle,
 } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getCurrentUser } from "@/lib/auth/user";
 
 // Defer to request time so every refresh gets a fresh seed.
 async function RandomAvatar() {
@@ -22,7 +23,19 @@ async function RandomAvatar() {
 
 export default function Home() {
 	return (
-		<main className="flex flex-1 bg-background">
+		<Suspense>
+			<HomeContent />
+		</Suspense>
+	);
+}
+
+// Checks the session before rendering anything, so signed-out visitors are
+// redirected even if the proxy lets the request through.
+async function HomeContent() {
+	await getCurrentUser();
+
+	return (
+		<div className="flex flex-1">
 			<Empty>
 				<EmptyHeader>
 					<EmptyMedia>
@@ -47,6 +60,6 @@ export default function Home() {
 					/>
 				</EmptyContent>
 			</Empty>
-		</main>
+		</div>
 	);
 }
