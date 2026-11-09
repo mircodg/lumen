@@ -1,5 +1,6 @@
 "use server";
 
+import { and, eq, inArray } from "drizzle-orm";
 import { refresh } from "next/cache";
 import * as z from "zod";
 import { db } from "@/db";
@@ -9,6 +10,8 @@ import {
 	chatMembers,
 	chats,
 	createBotSchema,
+	type UpdateBotInput,
+	updateBotSchema,
 } from "@/db/schema";
 import { auth } from "@/lib/auth/server";
 
@@ -16,7 +19,9 @@ export type CreateBotResult =
 	| { ok: true; bot: { id: string; name: string }; chatId: string }
 	| { ok: false; error: string };
 
-export async function createBot(input: CreateBotInput): Promise<CreateBotResult> {
+export async function createBot(
+	input: CreateBotInput,
+): Promise<CreateBotResult> {
 	const { data: session } = await auth.getSession();
 	if (!session?.user) {
 		return { ok: false, error: "You need to be signed in to create a bot." };
@@ -59,5 +64,106 @@ export async function createBot(input: CreateBotInput): Promise<CreateBotResult>
 	} catch (error) {
 		console.error("createBot failed", error);
 		return { ok: false, error: "Could not create the bot. Please try again." };
+	}
+}
+
+export type UpdateBotResult =
+	| { ok: true; bot: { id: string; name: string } }
+	| { ok: false; error: string };
+
+export async function updateBot(
+	botId: string,
+	input: UpdateBotInput,
+): Promise<UpdateBotResult> {
+	const { data: session } = await auth.getSession();
+	if (!session?.user) {
+		return { ok: false, error: "You need to be signed in to edit a bot." };
+	}
+
+	const parsed = updateBotSchema.safeParse(input);
+	if (!parsed.success) {
+		return { ok: false, error: z.prettifyError(parsed.error) };
+	}
+
+	const { instructions, ...values } = parsed.data;
+
+	try {
+		// Scoped to the owner, so another user's bot id updates nothing.
+		const [bot] = await db
+			.update(bots)
+			.set({ ...values, instructions: instructions || null })
+			.where(and(eq(bots.id, botId), eq(bots.userId, session.user.id)))
+			.returning({ id: bots.id, name: bots.name });
+
+		if (!bot) {
+			return { ok: false, error: "This bot no longer exists." };
+		}
+
+		refresh();
+		return { ok: true, bot };
+	} catch (error) {
+		console.error("updateBot failed", error);
+		return { ok: false, error: "Could not save the bot. Please try again." };
+	}
+}
+
+export type DeleteBotResult =
+	| { ok: true; bot: { id: string; name: string } }
+	| { ok: false; error: string };
+
+// Deletes the bot and its direct chats, which would be left with no one in
+// them. Group chats only lose the bot as a member (the FK cascades).
+// Doesn't call refresh(): the caller is on the deleted chat's page, which would
+// re-render as a 404. The client navigates away and refreshes instead.
+export async function deleteBot(botId: string): Promise<DeleteBotResult> {
+	const { data: session } = await auth.getSession();
+	if (!session?.user) {
+		return { ok: false, error: "You need to be signed in to delete a bot." };
+	}
+
+	const userId = session.user.id;
+
+	try {
+		const bot = await db.transaction(async (tx) => {
+			// Read before deleting the bot, which cascades away its memberships.
+			const directChats = await tx
+				.select({ id: chats.id })
+				.from(chats)
+				.innerJoin(chatMembers, eq(chatMembers.chatId, chats.id))
+				.where(
+					and(
+						eq(chatMembers.botId, botId),
+						eq(chats.userId, userId),
+						eq(chats.kind, "direct"),
+					),
+				);
+
+			// Scoped to the owner, so another user's bot id deletes nothing.
+			const [bot] = await tx
+				.delete(bots)
+				.where(and(eq(bots.id, botId), eq(bots.userId, userId)))
+				.returning({ id: bots.id, name: bots.name });
+			if (!bot) return null;
+
+			if (directChats.length > 0) {
+				await tx.delete(chats).where(
+					inArray(
+						chats.id,
+						directChats.map((chat) => chat.id),
+					),
+				);
+			}
+
+			return bot;
+		});
+
+		if (!bot) {
+			return { ok: false, error: "This bot no longer exists." };
+		}
+
+		return { ok: true, bot };
+	} catch (error) {
+		console.error("deleteBot failed", error);
+		return { ok: false, error: "Could not delete the bot. Please try again." };
 	}
 }

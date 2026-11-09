@@ -1,11 +1,23 @@
 "use client";
 
 import { useForm } from "@tanstack/react-form";
-import { ShuffleIcon } from "lucide-react";
+import { ShuffleIcon, Trash2Icon } from "lucide-react";
 import { nanoid } from "nanoid";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { createBot } from "@/actions/bot";
+import { createBot, deleteBot, updateBot } from "@/actions/bot";
 import { ChatAvatar } from "@/components/chat-avatar";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -35,7 +47,11 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/toast";
-import { createBotSchema } from "@/db/schema";
+import {
+	createBotSchema,
+	type EditableBot,
+	updateBotSchema,
+} from "@/db/schema";
 
 const presets = [
 	{
@@ -63,7 +79,10 @@ const presets = [
 	},
 ] as const;
 
-type BotDialogProps =
+type BotDialogProps = {
+	// Edits this bot instead of creating a new one.
+	bot?: EditableBot;
+} & (
 	| {
 			// The element that opens the dialog, e.g. a Button.
 			trigger: React.ReactElement;
@@ -76,9 +95,11 @@ type BotDialogProps =
 			trigger?: never;
 			open: boolean;
 			onOpenChange: (open: boolean) => void;
-	  };
+	  }
+);
 
 export function BotDialog({
+	bot,
 	trigger,
 	open: controlledOpen,
 	onOpenChange,
@@ -92,47 +113,55 @@ export function BotDialog({
 			{trigger && <DialogTrigger render={trigger} />}
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>New bot</DialogTitle>
+					<DialogTitle>{bot ? `Edit ${bot.name}` : "New bot"}</DialogTitle>
 					<DialogDescription>
-						Give it a face, a name, and a job to do.
+						{bot
+							? "Change its face, name, or job."
+							: "Give it a face, a name, and a job to do."}
 					</DialogDescription>
 				</DialogHeader>
 				{/* Mounted only while open, so every open starts with a fresh form. */}
-				<BotForm onCreated={() => setOpen(false)} />
+				<BotForm bot={bot} onSaved={() => setOpen(false)} />
 			</DialogContent>
 		</Dialog>
 	);
 }
 
-function BotForm({ onCreated }: { onCreated: () => void }) {
+function BotForm({ bot, onSaved }: { bot?: EditableBot; onSaved: () => void }) {
+	const errorTitle = bot ? "Could not save bot" : "Could not create bot";
+
 	const form = useForm({
 		defaultValues: {
-			name: "",
-			avatar: nanoid(),
-			job: "",
-			instructions: "",
+			name: bot?.name ?? "",
+			avatar: bot?.avatar ?? nanoid(),
+			job: bot?.job ?? "",
+			instructions: bot?.instructions ?? "",
 		},
-		validators: { onSubmit: createBotSchema },
+		validators: { onSubmit: bot ? updateBotSchema : createBotSchema },
 		onSubmit: async ({ value }) => {
 			try {
-				const result = await createBot(value);
+				const result = bot
+					? await updateBot(bot.id, value)
+					: await createBot(value);
 				if (!result.ok) {
 					toast.add({
 						type: "error",
-						title: "Could not create bot",
+						title: errorTitle,
 						description: result.error,
 					});
 					return;
 				}
 				toast.add({
 					type: "success",
-					title: `${result.bot.name} is ready`,
+					title: bot
+						? `${result.bot.name} is updated`
+						: `${result.bot.name} is ready`,
 				});
-				onCreated();
+				onSaved();
 			} catch {
 				toast.add({
 					type: "error",
-					title: "Could not create bot",
+					title: errorTitle,
 					description: "Network error. Please try again.",
 				});
 			}
@@ -151,25 +180,28 @@ function BotForm({ onCreated }: { onCreated: () => void }) {
 			<form.Subscribe selector={(state) => state.isSubmitting}>
 				{(pending) => (
 					<>
-						<div className="flex flex-wrap gap-2">
-							{presets.map((preset) => (
-								<Button
-									key={preset.job}
-									type="button"
-									variant="outline"
-									size="sm"
-									className="rounded-full"
-									disabled={pending}
-									onClick={() => {
-										form.setFieldValue("name", preset.name);
-										form.setFieldValue("job", preset.job);
-										form.setFieldValue("instructions", preset.instructions);
-									}}
-								>
-									{preset.name}
-								</Button>
-							))}
-						</div>
+						{/* Presets would overwrite an existing bot, so only offer them on create. */}
+						{!bot && (
+							<div className="flex flex-wrap gap-2">
+								{presets.map((preset) => (
+									<Button
+										key={preset.job}
+										type="button"
+										variant="outline"
+										size="sm"
+										className="rounded-full"
+										disabled={pending}
+										onClick={() => {
+											form.setFieldValue("name", preset.name);
+											form.setFieldValue("job", preset.job);
+											form.setFieldValue("instructions", preset.instructions);
+										}}
+									>
+										{preset.name}
+									</Button>
+								))}
+							</div>
+						)}
 
 						<form.Field name="avatar">
 							{(field) => (
@@ -291,6 +323,13 @@ function BotForm({ onCreated }: { onCreated: () => void }) {
 						</FieldGroup>
 
 						<DialogFooter>
+							{bot && (
+								<DeleteBotButton
+									bot={bot}
+									disabled={pending}
+									onDeleted={onSaved}
+								/>
+							)}
 							<DialogClose
 								render={<Button type="button" variant="outline" />}
 								disabled={pending}
@@ -299,12 +338,101 @@ function BotForm({ onCreated }: { onCreated: () => void }) {
 							</DialogClose>
 							<Button type="submit" disabled={pending}>
 								{pending && <Spinner data-icon="inline-start" />}
-								Create bot
+								{bot ? "Save changes" : "Create bot"}
 							</Button>
 						</DialogFooter>
 					</>
 				)}
 			</form.Subscribe>
 		</form>
+	);
+}
+
+function DeleteBotButton({
+	bot,
+	disabled,
+	onDeleted,
+}: {
+	bot: EditableBot;
+	disabled: boolean;
+	onDeleted: () => void;
+}) {
+	const router = useRouter();
+	// Controlled so the confirmation stays open while the delete is pending.
+	const [open, setOpen] = useState(false);
+	const [pending, setPending] = useState(false);
+
+	async function handleDelete() {
+		setPending(true);
+		try {
+			const result = await deleteBot(bot.id);
+			if (!result.ok) {
+				toast.add({
+					type: "error",
+					title: "Could not delete bot",
+					description: result.error,
+				});
+				return;
+			}
+			toast.add({ type: "success", title: `${result.bot.name} is deleted` });
+			setOpen(false);
+			onDeleted();
+			// The current chat is gone. Leave it, then refresh so the sidebar
+			// in the shared layout drops it too.
+			router.replace("/");
+			router.refresh();
+		} catch {
+			toast.add({
+				type: "error",
+				title: "Could not delete bot",
+				description: "Network error. Please try again.",
+			});
+		} finally {
+			setPending(false);
+		}
+	}
+
+	return (
+		<AlertDialog
+			open={open}
+			onOpenChange={(next) => {
+				if (!pending) setOpen(next);
+			}}
+		>
+			<AlertDialogTrigger
+				render={
+					<Button
+						type="button"
+						variant="destructive"
+						// Sits apart from Cancel and Save on wide screens.
+						className="sm:mr-auto"
+					/>
+				}
+				disabled={disabled}
+			>
+				<Trash2Icon data-icon="inline-start" />
+				Delete
+			</AlertDialogTrigger>
+			<AlertDialogContent>
+				<AlertDialogHeader>
+					<AlertDialogTitle>Delete {bot.name}?</AlertDialogTitle>
+					<AlertDialogDescription>
+						This deletes the bot and its direct chat. It can&apos;t be undone.
+					</AlertDialogDescription>
+				</AlertDialogHeader>
+				<AlertDialogFooter>
+					<AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+					<AlertDialogAction
+						type="button"
+						variant="destructive"
+						disabled={pending}
+						onClick={handleDelete}
+					>
+						{pending && <Spinner data-icon="inline-start" />}
+						Delete
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
 	);
 }

@@ -112,3 +112,14 @@ export const createBotSchema = insertBotSchema
 	});
 
 export type CreateBotInput = z.input<typeof createBotSchema>;
+
+// Editing changes the same fields the user filled in on create.
+export const updateBotSchema = createBotSchema;
+
+export type UpdateBotInput = z.input<typeof updateBotSchema>;
+
+// The bot fields the edit form starts from.
+export type EditableBot = Pick<
+	typeof bots.$inferSelect,
+	"id" | "name" | "avatar" | "job" | "instructions"
+>;

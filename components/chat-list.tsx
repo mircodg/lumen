@@ -1,12 +1,11 @@
 import { formatDistanceToNowStrict } from "date-fns";
 import { io } from "next/cache";
-import Link from "next/link";
 import { ChatAvatar } from "@/components/chat-avatar";
+import { ChatListButton } from "@/components/chat-list-button";
 import {
 	SidebarGroup,
 	SidebarGroupContent,
 	SidebarMenu,
-	SidebarMenuButton,
 	SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,12 +23,7 @@ export async function ChatList() {
 				<SidebarMenu>
 					{chats.map((chat) => (
 						<SidebarMenuItem key={chat.id}>
-							<SidebarMenuButton
-								render={<Link href={`/chats/${chat.id}`} />}
-								tooltip={chat.name}
-								// Collapsed, every button is size-8. p-0.5 centers the size-7 avatar.
-								className="h-auto gap-3 group-data-[collapsible=icon]:p-0.5!"
-							>
+							<ChatListButton chatId={chat.id} tooltip={chat.name}>
 								<ChatAvatar
 									seed={chat.avatar}
 									className="transition-[width,height] group-data-[collapsible=icon]:size-7"
@@ -50,7 +44,7 @@ export async function ChatList() {
 										</span>
 									)}
 								</div>
-							</SidebarMenuButton>
+							</ChatListButton>
 						</SidebarMenuItem>
 					))}
 				</SidebarMenu>

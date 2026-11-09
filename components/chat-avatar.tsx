@@ -4,10 +4,12 @@ import { cn } from "@/lib/utils"
 
 const SIZE = 32
 
-type ChatAvatarProps = {
+type ChatAvatarProps = Omit<
+	React.ComponentProps<typeof Image>,
+	"src" | "alt" | "width" | "height"
+> & {
 	seed: string
 	animated?: boolean
-	className?: string
 }
 
 function getAvatarUrl(seed: string, animated: boolean) {
@@ -16,9 +18,15 @@ function getAvatarUrl(seed: string, animated: boolean) {
 	return `https://api.dicebear.com/10.x/gaze/svg?${params}`
 }
 
-export function ChatAvatar({ seed, animated = false, className }: ChatAvatarProps) {
+export function ChatAvatar({
+	seed,
+	animated = false,
+	className,
+	...props
+}: ChatAvatarProps) {
 	return (
 		<Image
+			{...props}
 			src={getAvatarUrl(seed, animated)}
 			alt=""
 			width={SIZE}
