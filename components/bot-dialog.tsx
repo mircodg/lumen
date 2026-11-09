@@ -63,17 +63,33 @@ const presets = [
 	},
 ] as const;
 
-type BotDialogProps = {
-	// The element that opens the dialog, e.g. a Button.
-	trigger: React.ReactElement;
-};
+type BotDialogProps =
+	| {
+			// The element that opens the dialog, e.g. a Button.
+			trigger: React.ReactElement;
+			open?: never;
+			onOpenChange?: never;
+	  }
+	| {
+			// Controlled from outside, e.g. opened by a dropdown menu item that
+			// unmounts when the menu closes and so can't be the trigger itself.
+			trigger?: never;
+			open: boolean;
+			onOpenChange: (open: boolean) => void;
+	  };
 
-export function BotDialog({ trigger }: BotDialogProps) {
-	const [open, setOpen] = useState(false);
+export function BotDialog({
+	trigger,
+	open: controlledOpen,
+	onOpenChange,
+}: BotDialogProps) {
+	const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+	const open = controlledOpen ?? uncontrolledOpen;
+	const setOpen = onOpenChange ?? setUncontrolledOpen;
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
-			<DialogTrigger render={trigger} />
+			{trigger && <DialogTrigger render={trigger} />}
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
 					<DialogTitle>New bot</DialogTitle>

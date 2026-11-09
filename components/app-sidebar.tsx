@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { SignOutMenuItem } from "@/components/auth/sign-out-menu-item";
+import { NewChatMenu } from "@/components/new-chat-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
 	DropdownMenu,
@@ -73,7 +74,9 @@ function UserButtonSkeleton() {
 export function AppSidebar() {
 	return (
 		<Sidebar>
-			<SidebarHeader />
+			<SidebarHeader className="flex-row justify-end">
+				<NewChatMenu />
+			</SidebarHeader>
 			<SidebarContent />
 			<SidebarFooter>
 				<SidebarMenu>
