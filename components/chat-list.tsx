@@ -26,10 +26,15 @@ export async function ChatList() {
 						<SidebarMenuItem key={chat.id}>
 							<SidebarMenuButton
 								render={<Link href={`/chats/${chat.id}`} />}
-								className="h-auto gap-3"
+								tooltip={chat.name}
+								// Collapsed, every button is size-8. p-0.5 centers the size-7 avatar.
+								className="h-auto gap-3 group-data-[collapsible=icon]:p-0.5!"
 							>
-								<ChatAvatar seed={chat.avatar} />
-								<div className="grid min-w-0 flex-1 leading-tight">
+								<ChatAvatar
+									seed={chat.avatar}
+									className="transition-[width,height] group-data-[collapsible=icon]:size-7"
+								/>
+								<div className="grid min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">
 									<div className="flex items-baseline justify-between gap-2">
 										<span className="truncate font-medium">{chat.name}</span>
 										<time
@@ -61,9 +66,12 @@ export function ChatListSkeleton() {
 		<SidebarGroup>
 			<SidebarGroupContent className="flex flex-col gap-1">
 				{Array.from({ length: 3 }, (_, i) => (
-					<div key={i} className="flex items-center gap-3 p-2">
-						<Skeleton className="size-8 rounded-full" />
-						<div className="flex flex-1 flex-col gap-1">
+					<div
+						key={i}
+						className="flex items-center gap-3 p-2 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-0.5"
+					>
+						<Skeleton className="size-8 shrink-0 rounded-full group-data-[collapsible=icon]:size-7" />
+						<div className="flex flex-1 flex-col gap-1 group-data-[collapsible=icon]:hidden">
 							<Skeleton className="h-3.5 w-24" />
 							<Skeleton className="h-3 w-full" />
 						</div>

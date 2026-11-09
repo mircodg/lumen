@@ -3,7 +3,6 @@
 import { PlusIcon, UsersIcon } from "lucide-react";
 import { useState } from "react";
 import { BotDialog } from "@/components/bot-dialog";
-import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -11,6 +10,7 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { SidebarMenuButton } from "@/components/ui/sidebar";
 
 export function NewChatMenu() {
 	const [botDialogOpen, setBotDialogOpen] = useState(false);
@@ -20,7 +20,10 @@ export function NewChatMenu() {
 			<DropdownMenu>
 				<DropdownMenuTrigger
 					render={
-						<Button size="icon-sm" variant="ghost" aria-label="New chat" />
+						<SidebarMenuButton
+							aria-label="New chat"
+							className="size-8 justify-center data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground"
+						/>
 					}
 				>
 					<PlusIcon />

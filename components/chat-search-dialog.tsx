@@ -15,6 +15,11 @@ import {
 	CommandList,
 } from "@/components/ui/command";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
+import {
+	SidebarMenu,
+	SidebarMenuButton,
+	SidebarMenuItem,
+} from "@/components/ui/sidebar";
 
 export type SearchableChat = {
 	id: string;
@@ -68,7 +73,7 @@ export function ChatSearchDialog({ chats }: { chats: SearchableChat[] }) {
 				onClick={() => setOpen(true)}
 				// Looks like <Input /> at rest (its placeholder color included) while
 				// keeping the outline button's hover.
-				className="w-full min-w-0 justify-start border-input bg-transparent px-2.5 py-1 text-base font-normal text-muted-foreground transition-colors md:text-sm dark:bg-input/30"
+				className="w-full min-w-0 justify-start border-input group-data-[collapsible=icon]:hidden bg-transparent px-2.5 py-1 text-base font-normal text-muted-foreground transition-colors md:text-sm dark:bg-input/30"
 			>
 				<SearchIcon data-icon="inline-start" />
 				Search chats
@@ -76,6 +81,21 @@ export function ChatSearchDialog({ chats }: { chats: SearchableChat[] }) {
 					<Kbd>{modifierKey}K</Kbd>
 				</KbdGroup>
 			</Button>
+			{/* The search bar has no room in the collapsed sidebar, so an icon button replaces it. */}
+			<SidebarMenu className="hidden group-data-[collapsible=icon]:flex">
+				<SidebarMenuItem>
+					<SidebarMenuButton
+						type="button"
+						aria-haspopup="dialog"
+						aria-label="Search chats"
+						tooltip={`Search chats (${modifierKey}K)`}
+						onClick={() => setOpen(true)}
+						className="justify-center"
+					>
+						<SearchIcon />
+					</SidebarMenuButton>
+				</SidebarMenuItem>
+			</SidebarMenu>
 			<CommandDialog
 				open={open}
 				onOpenChange={setOpen}

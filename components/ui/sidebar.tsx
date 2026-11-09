@@ -44,6 +44,27 @@ type SidebarContextProps = {
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null)
 
+// The cookie is read in the browser rather than with cookies() on the server,
+// so layouts using the sidebar stay in the prerendered static shell.
+function readSidebarCookie(): boolean | undefined {
+  const match = document.cookie.match(
+    new RegExp(`(?:^|; )${SIDEBAR_COOKIE_NAME}=(true|false)`)
+  )
+  return match ? match[1] === "true" : undefined
+}
+
+// Inline scripts run during HTML parsing on hard navigations. On the client,
+// type="text/plain" keeps React from warning about rendering a <script>.
+function InlineScript({ html }: { html: string }) {
+  return (
+    <script
+      type={typeof window === "undefined" ? "text/javascript" : "text/plain"}
+      suppressHydrationWarning
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  )
+}
+
 function useSidebar() {
   const context = React.useContext(SidebarContext)
   if (!context) {
@@ -71,7 +92,13 @@ function SidebarProvider({
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
-  const [_open, _setOpen] = React.useState(defaultOpen)
+  // Reads the same cookie as the Sidebar's inline script, so the state React
+  // hydrates with matches the attributes that script already set.
+  const [_open, _setOpen] = React.useState(() =>
+    typeof document === "undefined"
+      ? defaultOpen
+      : (readSidebarCookie() ?? defaultOpen)
+  )
   const open = openProp ?? _open
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
@@ -83,7 +110,7 @@ function SidebarProvider({
       }
 
       // This sets the cookie to keep the sidebar state.
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
+      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}; SameSite=Lax`
     },
     [setOpenProp, open]
   )
@@ -163,6 +190,7 @@ function Sidebar({
   collapsible?: "offcanvas" | "icon" | "none"
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+  const id = React.useId()
 
   if (collapsible === "none") {
     return (
@@ -205,49 +233,59 @@ function Sidebar({
     )
   }
 
+  // The server can't see the cookie, so it always renders the default state.
+  // This script corrects the attributes before the first paint, and
+  // suppressHydrationWarning lets React keep them.
+  const restoreStateScript = `{var m=document.cookie.match(/(?:^|; )${SIDEBAR_COOKIE_NAME}=(true|false)/),e=document.getElementById(${JSON.stringify(id)});if(m&&e){var o=m[1]==="true";e.setAttribute("data-state",o?"expanded":"collapsed");e.setAttribute("data-collapsible",o?"":${JSON.stringify(collapsible)})}}`
+
   return (
-    <div
-      className="group peer hidden text-sidebar-foreground md:block"
-      data-state={state}
-      data-collapsible={state === "collapsed" ? collapsible : ""}
-      data-variant={variant}
-      data-side={side}
-      data-slot="sidebar"
-    >
-      {/* This is what handles the sidebar gap on desktop */}
+    <>
       <div
-        data-slot="sidebar-gap"
-        className={cn(
-          "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
-          "group-data-[collapsible=offcanvas]:w-0",
-          "group-data-[side=right]:rotate-180",
-          variant === "floating" || variant === "inset"
-            ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"
-            : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)"
-        )}
-      />
-      <div
-        data-slot="sidebar-container"
+        id={id}
+        suppressHydrationWarning
+        className="group peer hidden text-sidebar-foreground md:block"
+        data-state={state}
+        data-collapsible={state === "collapsed" ? collapsible : ""}
+        data-variant={variant}
         data-side={side}
-        className={cn(
-          "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] md:flex",
-          // Adjust the padding for floating and inset variants.
-          variant === "floating" || variant === "inset"
-            ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
-            : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
-          className
-        )}
-        {...props}
+        data-slot="sidebar"
       >
+        {/* This is what handles the sidebar gap on desktop */}
         <div
-          data-sidebar="sidebar"
-          data-slot="sidebar-inner"
-          className="flex size-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:shadow-sm group-data-[variant=floating]:ring-1 group-data-[variant=floating]:ring-sidebar-border"
+          data-slot="sidebar-gap"
+          className={cn(
+            "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
+            "group-data-[collapsible=offcanvas]:w-0",
+            "group-data-[side=right]:rotate-180",
+            variant === "floating" || variant === "inset"
+              ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4)))]"
+              : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)"
+          )}
+        />
+        <div
+          data-slot="sidebar-container"
+          data-side={side}
+          className={cn(
+            "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] md:flex",
+            // Adjust the padding for floating and inset variants.
+            variant === "floating" || variant === "inset"
+              ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
+              : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
+            className
+          )}
+          {...props}
         >
-          {children}
+          <div
+            data-sidebar="sidebar"
+            data-slot="sidebar-inner"
+            className="flex size-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:shadow-sm group-data-[variant=floating]:ring-1 group-data-[variant=floating]:ring-sidebar-border"
+          >
+            {children}
+          </div>
         </div>
       </div>
-    </div>
+      <InlineScript html={restoreStateScript} />
+    </>
   )
 }
 

@@ -18,6 +18,7 @@ import {
 	SidebarMenu,
 	SidebarMenuButton,
 	SidebarMenuItem,
+	SidebarRail,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getCurrentUser } from "@/lib/auth/user";
@@ -37,15 +38,17 @@ async function UserButton() {
 				render={
 					<SidebarMenuButton
 						size="lg"
-						className="data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground"
+						// Collapsed, every button is size-8. p-0.5 centers the size-7 avatar,
+						// the same box the chat avatars use.
+						className="group-data-[collapsible=icon]:p-0.5! data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground"
 					/>
 				}
 			>
-				<Avatar>
+				<Avatar className="transition-[width,height] group-data-[collapsible=icon]:size-7">
 					<AvatarImage src={user.image ?? getUserAvatarUrl(user.id)} alt="" />
 					<AvatarFallback>{user.name.charAt(0).toUpperCase()}</AvatarFallback>
 				</Avatar>
-				<div className="grid flex-1 leading-tight">
+				<div className="grid flex-1 leading-tight group-data-[collapsible=icon]:hidden">
 					<span className="truncate font-medium">{user.name}</span>
 					<span className="truncate text-xs text-foreground">{user.email}</span>
 				</div>
@@ -63,9 +66,9 @@ async function UserButton() {
 // Components rejects during prerender, so this fallback uses fixed sizes.
 function UserButtonSkeleton() {
 	return (
-		<div className="flex h-12 items-center gap-2 p-2">
-			<Skeleton className="size-8 rounded-full" />
-			<div className="flex flex-col gap-1">
+		<div className="flex h-12 items-center gap-2 p-2 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-0.5">
+			<Skeleton className="size-8 shrink-0 rounded-full group-data-[collapsible=icon]:size-7" />
+			<div className="flex flex-col gap-1 group-data-[collapsible=icon]:hidden">
 				<Skeleton className="h-3.5 w-28" />
 				<Skeleton className="h-3 w-36" />
 			</div>
@@ -75,11 +78,13 @@ function UserButtonSkeleton() {
 
 export function AppSidebar() {
 	return (
-		<Sidebar>
+		<Sidebar collapsible="icon">
 			<SidebarHeader>
-				<div className="flex justify-end">
-					<NewChatMenu />
-				</div>
+				<SidebarMenu className="items-end">
+					<SidebarMenuItem>
+						<NewChatMenu />
+					</SidebarMenuItem>
+				</SidebarMenu>
 				<Suspense fallback={<ChatSearchSkeleton />}>
 					<ChatSearch />
 				</Suspense>
@@ -98,6 +103,7 @@ export function AppSidebar() {
 					</SidebarMenuItem>
 				</SidebarMenu>
 			</SidebarFooter>
+			<SidebarRail />
 		</Sidebar>
 	);
 }
