@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
+import { Chat } from "@/components/chat";
 import { getChat } from "@/queries/chat";
 
 export default function ChatPage(props: PageProps<"/chats/[chatId]">) {
@@ -24,5 +25,6 @@ async function ChatContent({
 	// Missing and someone else's chat look the same, so ids don't leak.
 	if (!chat) notFound();
 
-	return null;
+	// Keyed, so switching chats starts a fresh thread.
+	return <Chat key={chat.id} chatId={chat.id} name={chat.name} />;
 }

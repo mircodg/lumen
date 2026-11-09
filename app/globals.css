@@ -2,6 +2,9 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* Streamdown renders its own Tailwind classes. */
+@source "../node_modules/streamdown/dist/*.js";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

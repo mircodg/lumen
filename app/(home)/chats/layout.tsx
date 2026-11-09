@@ -5,7 +5,9 @@ import { ChatHeader } from "@/components/chat-header";
 // slot, which does.
 export default function ChatsLayout({ children, header }: LayoutProps<"/chats">) {
 	return (
-		<div className="flex flex-1 flex-col">
+		// Viewport height, so the thread scrolls inside the page and the prompt
+		// stays pinned to the bottom.
+		<div className="flex h-svh flex-col">
 			<ChatHeader>{header}</ChatHeader>
 			{children}
 		</div>
