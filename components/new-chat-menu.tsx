@@ -20,7 +20,7 @@ export function NewChatMenu() {
 			<DropdownMenu>
 				<DropdownMenuTrigger
 					render={
-						<Button size="icon-sm" variant="outline" aria-label="New chat" />
+						<Button size="icon-sm" variant="ghost" aria-label="New chat" />
 					}
 				>
 					<PlusIcon />

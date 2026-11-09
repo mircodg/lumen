@@ -1,5 +1,7 @@
 import { Suspense } from "react";
 import { SignOutMenuItem } from "@/components/auth/sign-out-menu-item";
+import { ChatList, ChatListSkeleton } from "@/components/chat-list";
+import { ChatSearch, ChatSearchSkeleton } from "@/components/chat-search";
 import { NewChatMenu } from "@/components/new-chat-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -74,10 +76,19 @@ function UserButtonSkeleton() {
 export function AppSidebar() {
 	return (
 		<Sidebar>
-			<SidebarHeader className="flex-row justify-end">
-				<NewChatMenu />
+			<SidebarHeader>
+				<div className="flex justify-end">
+					<NewChatMenu />
+				</div>
+				<Suspense fallback={<ChatSearchSkeleton />}>
+					<ChatSearch />
+				</Suspense>
 			</SidebarHeader>
-			<SidebarContent />
+			<SidebarContent>
+				<Suspense fallback={<ChatListSkeleton />}>
+					<ChatList />
+				</Suspense>
+			</SidebarContent>
 			<SidebarFooter>
 				<SidebarMenu>
 					<SidebarMenuItem>
