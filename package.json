@@ -14,6 +14,8 @@
     "@ai-sdk/google": "^4.0.114",
     "@ai-sdk/react": "^4.0.170",
     "@base-ui/react": "^1.9.0",
+    "@dicebear/core": "^10.7.0",
+    "@dicebear/styles": "^10.6.0",
     "@neon/auth": "^0.8.2",
     "@neon/config": "^1.11.3",
     "@neon/env": "^1.6.15",

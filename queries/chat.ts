@@ -1,3 +1,4 @@
+import { chat as chatAgents, defaultStorage } from "@trigger.dev/sdk/ai";
 import { and, asc, eq } from "drizzle-orm";
 import { cache } from "react";
 import { db } from "@/db";
@@ -51,3 +52,12 @@ export const getChat = cache(async (chatId: string): Promise<Chat | null> => {
 		bot,
 	};
 });
+
+const loadTranscript = chatAgents.createLoadTranscriptAction(defaultStorage);
+
+// A chat's saved conversation, read from the agent's transcript storage.
+// Loads purely by chat id with no owner check, so call getChat for the same
+// id and only send the result to the browser when it returns the chat.
+export function getChatTranscript(chatId: string) {
+	return loadTranscript({ chatId });
+}
