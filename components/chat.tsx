@@ -1,6 +1,11 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
+import type { TriggerChatTransport } from "@trigger.dev/sdk/chat";
+import {
+	useLoadTranscript,
+	useTriggerChatTransport,
+} from "@trigger.dev/sdk/chat/react";
 import type { UIMessage } from "ai";
 import {
 	ArrowUpIcon,
@@ -9,6 +14,11 @@ import {
 	SquareIcon,
 } from "lucide-react";
 import { useRef, useState } from "react";
+import {
+	loadChatTranscript,
+	mintChatAccessToken,
+	startChatSession,
+} from "@/actions/chat";
 import { Markdown } from "@/components/markdown";
 import {
 	Alert,
@@ -40,14 +50,50 @@ import {
 	MessageScrollerProvider,
 	MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
+import type { chatAgent } from "@/trigger/chat";
 
-// The conversation for one chat. Messages live in memory only: nothing is
-// persisted yet, so a reload starts over. The page keys this by chat id, so
-// switching chats starts a fresh thread. The default transport posts to
-// /api/chat with the chat id and the full history.
+// The conversation for one chat, run by the Trigger.dev chat agent in
+// trigger/chat.ts. The agent keeps the history in its transcript storage, so
+// it's loaded first and the thread mounts once it's in. The page keys this by
+// chat id, so switching chats starts a fresh thread.
 export function Chat({ chatId, name }: { chatId: string; name: string }) {
+	const transport = useTriggerChatTransport<typeof chatAgent>({
+		task: "chat",
+		accessToken: ({ chatId }) => mintChatAccessToken(chatId),
+		startSession: ({ chatId, clientData }) =>
+			startChatSession({ chatId, clientData }),
+	});
+	const transcript = useLoadTranscript(chatId, loadChatTranscript, {
+		transport,
+	});
+
+	if (transcript.isLoading) return null;
+
+	return (
+		<ChatThread
+			chatId={chatId}
+			name={name}
+			transport={transport}
+			initialMessages={transcript.messages}
+		/>
+	);
+}
+
+function ChatThread({
+	chatId,
+	name,
+	transport,
+	initialMessages,
+}: {
+	chatId: string;
+	name: string;
+	transport: TriggerChatTransport;
+	initialMessages: UIMessage[];
+}) {
 	const { messages, sendMessage, status, stop, error, regenerate } = useChat({
 		id: chatId,
+		messages: initialMessages,
+		transport,
 	});
 	const [text, setText] = useState("");
 	const formRef = useRef<HTMLFormElement>(null);
