@@ -3,6 +3,7 @@
 import { PlusIcon, UsersIcon } from "lucide-react";
 import { useState } from "react";
 import { BotDialog } from "@/components/bot-dialog";
+import { GroupChatDialog } from "@/components/group-chat-dialog";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -11,9 +12,12 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
+import type { PickableBot } from "@/queries/bot";
 
-export function NewChatMenu() {
+// `bots` are the ones a group chat can be made from.
+export function NewChatMenu({ bots }: { bots: PickableBot[] }) {
 	const [botDialogOpen, setBotDialogOpen] = useState(false);
+	const [groupDialogOpen, setGroupDialogOpen] = useState(false);
 
 	return (
 		<>
@@ -34,15 +38,20 @@ export function NewChatMenu() {
 							<PlusIcon />
 							Create a new bot
 						</DropdownMenuItem>
-						<DropdownMenuItem>
+						<DropdownMenuItem onClick={() => setGroupDialogOpen(true)}>
 							<UsersIcon />
 							Create a group chat
 						</DropdownMenuItem>
 					</DropdownMenuGroup>
 				</DropdownMenuContent>
 			</DropdownMenu>
-			{/* Rendered outside the menu so it stays mounted after the menu closes. */}
+			{/* Rendered outside the menu so they stay mounted after the menu closes. */}
 			<BotDialog open={botDialogOpen} onOpenChange={setBotDialogOpen} />
+			<GroupChatDialog
+				bots={bots}
+				open={groupDialogOpen}
+				onOpenChange={setGroupDialogOpen}
+			/>
 		</>
 	);
 }

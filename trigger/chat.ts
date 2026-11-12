@@ -3,6 +3,7 @@ import type { Sandbox } from "@daytona/sdk";
 import { chat, type InferChatUIMessageFromTools } from "@trigger.dev/sdk/ai";
 import { isStepCount } from "ai";
 import { asc, eq } from "drizzle-orm";
+import * as z from "zod";
 import { db } from "@/db";
 import { chatMembers } from "@/db/schema";
 import { connectBotSandbox } from "@/lib/daytona";
@@ -15,38 +16,49 @@ const model = google("gemini-3.5-flash-lite");
 // default transcript storage, keyed by chat id, so a reload or a fresh run
 // picks up the history. Sessions are only started by the server actions in
 // actions/chat.ts, which check that the signed-in user owns the chat.
-export const chatAgent = chat.withUIMessage<ChatUIMessage>().agent({
-	id: "chat",
-	// Declared here as well as on streamText so each tool's toModelOutput
-	// (screenshots as images) is re-applied to history on later turns.
-	tools: ({ chatId }) => createSandboxTools(sandboxConnector(chatId)),
-	// Messages the owner sends mid-reply steer it: they're added to the
-	// model's context at the next step boundary (between tool calls). One that
-	// arrives after the last step is answered as the next turn instead.
-	pendingMessages: { shouldInject: () => true },
-	run: async ({ chatId, messages, tools, signal, streamText }) =>
-		streamText({
-			model,
-			// Read every turn, so bot edits apply to the next reply.
-			instructions: botInstructions(await getChatBot(chatId)),
-			messages,
-			tools,
-			// Computer use takes many small steps: look, click, look again.
-			stopWhen: isStepCount(40),
-			abortSignal: signal,
-		}),
-});
+//
+// In a group chat, the composer picks which bot answers. Its id arrives with
+// each turn as the transport's client data, and that bot answers the turn
+// with its own instructions and sandbox.
+export const chatAgent = chat
+	.withUIMessage<ChatUIMessage>()
+	.withClientData({ schema: z.object({ botId: z.string().optional() }) })
+	.agent({
+		id: "chat",
+		// Declared here as well as on streamText so each tool's toModelOutput
+		// (screenshots as images) is re-applied to history on later turns.
+		// Resolved per turn, so the tools work in the turn's bot's sandbox.
+		tools: ({ chatId, clientData }) =>
+			createSandboxTools(sandboxConnector(chatId, clientData?.botId)),
+		// Messages the owner sends mid-reply steer it: they're added to the
+		// model's context at the next step boundary (between tool calls). One that
+		// arrives after the last step is answered as the next turn instead.
+		pendingMessages: { shouldInject: () => true },
+		run: async ({ chatId, clientData, messages, tools, signal, streamText }) =>
+			streamText({
+				model,
+				// Read every turn, so bot edits and the bot picked apply to the next reply.
+				instructions: botInstructions(
+					await getChatBot(chatId, clientData?.botId),
+				),
+				messages,
+				tools,
+				// Computer use takes many small steps: look, click, look again.
+				stopWhen: isStepCount(40),
+				abortSignal: signal,
+			}),
+	});
 
 export type ChatUIMessage = InferChatUIMessageFromTools<SandboxTools>;
 
 // Connects to the chat's bot sandbox on first use, then reuses it for the
 // rest of the turn. A failed connect is retried by the next tool call.
-function sandboxConnector(chatId: string) {
+function sandboxConnector(chatId: string, botId: string | undefined) {
 	let sandbox: Promise<Sandbox> | undefined;
 
 	return () => {
 		sandbox ??= (async () => {
-			const bot = await getChatBot(chatId);
+			const bot = await getChatBot(chatId, botId);
 			if (!bot?.sandboxId) throw new Error("This bot has no sandbox.");
 			return connectBotSandbox(bot.sandboxId);
 		})().catch((error) => {
@@ -57,9 +69,11 @@ function sandboxConnector(chatId: string) {
 	};
 }
 
-// The chat's first bot, or null when it has none.
-async function getChatBot(chatId: string) {
-	const member = await db.query.chatMembers.findFirst({
+// The bot answering this turn: the picked one when it's in the chat, else
+// the chat's first bot, or null when it has none. botId comes from the
+// browser, so it's only matched against the chat's own members.
+async function getChatBot(chatId: string, botId: string | undefined) {
+	const members = await db.query.chatMembers.findMany({
 		where: eq(chatMembers.chatId, chatId),
 		orderBy: asc(chatMembers.joinedAt),
 		with: {
@@ -68,6 +82,7 @@ async function getChatBot(chatId: string) {
 			},
 		},
 	});
+	const member = members.find((member) => member.botId === botId) ?? members[0];
 	return member?.bot ?? null;
 }
 

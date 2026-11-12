@@ -16,7 +16,7 @@ export async function ChatSearch() {
 				id: chat.id,
 				name: chat.name,
 				preview: chat.preview,
-				avatar: chat.avatar,
+				avatars: chat.avatars,
 				lastMessageAt: chat.lastMessageAt.toISOString(),
 				lastMessageAgo: formatDistanceToNowStrict(chat.lastMessageAt),
 			}))}

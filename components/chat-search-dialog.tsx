@@ -3,7 +3,7 @@
 import { SearchIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { ChatAvatar } from "@/components/chat-avatar";
+import { GroupChatAvatar } from "@/components/group-chat-avatar";
 import { Button } from "@/components/ui/button";
 import {
 	Command,
@@ -25,7 +25,7 @@ export type SearchableChat = {
 	id: string;
 	name: string;
 	preview: string | null;
-	avatar: string;
+	avatars: string[];
 	lastMessageAt: string;
 	lastMessageAgo: string;
 };
@@ -115,7 +115,7 @@ export function ChatSearchDialog({ chats }: { chats: SearchableChat[] }) {
 									onSelect={() => openChat(chat.id)}
 									className="gap-3"
 								>
-									<ChatAvatar seed={chat.avatar} />
+									<GroupChatAvatar seeds={chat.avatars} />
 									<div className="grid min-w-0 flex-1 leading-tight">
 										<div className="flex items-baseline justify-between gap-2">
 											<span className="truncate font-medium">{chat.name}</span>

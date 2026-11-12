@@ -7,11 +7,12 @@ import { getCurrentUser } from "@/lib/auth/user";
 
 export type Chat = {
 	id: string;
+	kind: "direct" | "group";
 	name: string;
-	// Seed for the chat's face. Group chats fall back to their first bot.
-	avatar: string;
-	// The chat's first bot. Null when the chat has no members.
-	bot: EditableBot | null;
+	// Face seeds of the chat's bots, in join order. One for a direct chat.
+	avatars: string[];
+	// The chat's bots, in join order. The first one answers by default.
+	bots: EditableBot[];
 };
 
 // One of the signed-in user's chats, or null when it doesn't exist or belongs
@@ -23,11 +24,10 @@ export const getChat = cache(async (chatId: string): Promise<Chat | null> => {
 
 	const chat = await db.query.chats.findFirst({
 		where: and(eq(chats.id, chatId), eq(chats.userId, user.id)),
-		columns: { id: true, name: true },
+		columns: { id: true, kind: true, name: true },
 		with: {
 			members: {
 				orderBy: asc(chatMembers.joinedAt),
-				limit: 1,
 				with: {
 					bot: {
 						columns: {
@@ -44,12 +44,13 @@ export const getChat = cache(async (chatId: string): Promise<Chat | null> => {
 	});
 	if (!chat) return null;
 
-	const bot = chat.members[0]?.bot ?? null;
+	const bots = chat.members.map((member) => member.bot);
 	return {
 		id: chat.id,
-		name: chat.name ?? bot?.name ?? "Untitled chat",
-		avatar: bot?.avatar ?? chat.id,
-		bot,
+		kind: chat.kind,
+		name: chat.name ?? bots[0]?.name ?? "Untitled chat",
+		avatars: bots.length > 0 ? bots.map((bot) => bot.avatar) : [chat.id],
+		bots,
 	};
 });
 

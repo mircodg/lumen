@@ -74,7 +74,7 @@ async function DesktopLabel({
 	const chat = await getChat(chatId);
 	if (!chat) return null;
 
-	return `${chat.bot?.name ?? chat.name}'s screen`;
+	return `${chat.bots[0]?.name ?? chat.name}'s screen`;
 }
 
 // getChat checks the session first, so signed-out visitors are redirected even
@@ -111,6 +111,7 @@ async function ChatContent({
 			key={chat.id}
 			chatId={chat.id}
 			name={chat.name}
+			bots={chat.bots.map(({ id, name, avatar }) => ({ id, name, avatar }))}
 			transcript={transcript}
 		/>
 	);

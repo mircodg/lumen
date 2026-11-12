@@ -10,7 +10,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { nanoid } from "nanoid";
-import type * as z from "zod";
+import * as z from "zod";
 
 export const bots = pgTable(
 	"bots",
@@ -123,3 +123,19 @@ export type EditableBot = Pick<
 	typeof bots.$inferSelect,
 	"id" | "name" | "avatar" | "job" | "instructions"
 >;
+
+// Validation for inserting a chat. Derived from the table so column changes flow through.
+export const insertChatSchema = createInsertSchema(chats, {
+	name: (s) => s.trim().min(1, "Give the group a name.").max(50),
+});
+
+// The fields a user fills in for a group chat. The name is required here, and
+// the bots are the members, in the order they were picked.
+export const createGroupChatSchema = insertChatSchema
+	.pick({ name: true })
+	.extend({
+		name: insertChatSchema.shape.name.unwrap(),
+		botIds: z.array(z.string()).min(2, "Pick at least two bots."),
+	});
+
+export type CreateGroupChatInput = z.input<typeof createGroupChatSchema>;

@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getCurrentUser } from "@/lib/auth/user";
+import { getUserBots } from "@/queries/bot";
 
 function getUserAvatarUrl(seed: string) {
 	const params = new URLSearchParams({ seed });
@@ -76,13 +77,21 @@ function UserButtonSkeleton() {
 	);
 }
 
+// Reads the session cookie, so it must render inside Suspense.
+async function NewChat() {
+	const bots = await getUserBots();
+	return <NewChatMenu bots={bots} />;
+}
+
 export function AppSidebar() {
 	return (
 		<Sidebar collapsible="icon">
 			<SidebarHeader>
 				<SidebarMenu className="items-end">
 					<SidebarMenuItem>
-						<NewChatMenu />
+						<Suspense fallback={<Skeleton className="size-8" />}>
+							<NewChat />
+						</Suspense>
 					</SidebarMenuItem>
 				</SidebarMenu>
 				<Suspense fallback={<ChatSearchSkeleton />}>

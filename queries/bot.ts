@@ -1,7 +1,7 @@
 import { asc, desc, eq } from "drizzle-orm";
 import { cache } from "react";
 import { db } from "@/db";
-import { chatMembers, chats } from "@/db/schema";
+import { bots, chatMembers, chats } from "@/db/schema";
 import { getCurrentUser } from "@/lib/auth/user";
 
 export type SidebarChat = {
@@ -9,8 +9,8 @@ export type SidebarChat = {
 	name: string;
 	preview: string | null;
 	lastMessageAt: Date;
-	// Seed for the chat's face. Group chats fall back to their first bot.
-	avatar: string;
+	// Face seeds of the chat's bots, in join order. One for a direct chat.
+	avatars: string[];
 };
 
 // The signed-in user's chats, most recent first. Scoped to the session's user
@@ -23,24 +23,43 @@ export const getUserChats = cache(async (): Promise<SidebarChat[]> => {
 	const rows = await db.query.chats.findMany({
 		where: eq(chats.userId, user.id),
 		orderBy: desc(chats.lastMessageAt),
-		columns: { id: true, name: true, lastMessageAt: true, lastMessagePreview: true },
+		columns: {
+			id: true,
+			name: true,
+			lastMessageAt: true,
+			lastMessagePreview: true,
+		},
 		with: {
 			members: {
 				orderBy: asc(chatMembers.joinedAt),
-				limit: 1,
 				with: { bot: { columns: { name: true, avatar: true } } },
 			},
 		},
 	});
 
 	return rows.map((chat) => {
-		const bot = chat.members[0]?.bot;
+		const avatars = chat.members.map((member) => member.bot.avatar);
 		return {
 			id: chat.id,
-			name: chat.name ?? bot?.name ?? "Untitled chat",
+			name: chat.name ?? chat.members[0]?.bot.name ?? "Untitled chat",
 			preview: chat.lastMessagePreview,
 			lastMessageAt: chat.lastMessageAt,
-			avatar: bot?.avatar ?? chat.id,
+			// A chat with no bots left still gets a face of its own.
+			avatars: avatars.length > 0 ? avatars : [chat.id],
 		};
+	});
+});
+
+export type PickableBot = { id: string; name: string; avatar: string };
+
+// The signed-in user's bots, oldest first, for picking group members. Reads
+// the session cookie, so callers must render inside <Suspense>.
+export const getUserBots = cache(async (): Promise<PickableBot[]> => {
+	const user = await getCurrentUser();
+
+	return db.query.bots.findMany({
+		where: eq(bots.userId, user.id),
+		orderBy: asc(bots.createdAt),
+		columns: { id: true, name: true, avatar: true },
 	});
 });

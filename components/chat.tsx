@@ -10,12 +10,14 @@ import {
 } from "@trigger.dev/sdk/chat/react";
 import {
 	ArrowUpIcon,
+	ChevronDownIcon,
 	CircleAlertIcon,
 	MessageCircleDashedIcon,
 	SquareIcon,
 } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { mintChatAccessToken, startChatSession } from "@/actions/chat";
+import { ChatAvatar } from "@/components/chat-avatar";
 import { AssistantParts, hasVisibleParts } from "@/components/chat-parts";
 import {
 	Alert,
@@ -25,6 +27,15 @@ import {
 } from "@/components/ui/alert";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuGroup,
+	DropdownMenuLabel,
+	DropdownMenuRadioGroup,
+	DropdownMenuRadioItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
 	Empty,
 	EmptyDescription,
@@ -62,17 +73,27 @@ import type { ChatUIMessage, chatAgent } from "@/trigger/chat";
 export function Chat({
 	chatId,
 	name,
+	bots,
 	transcript,
 }: {
 	chatId: string;
 	name: string;
+	// The chat's bots, in join order. A group chat has several.
+	bots: ChatBot[];
 	transcript: Promise<LoadTranscriptResult>;
 }) {
+	// Which bot answers the next message. The first one until the user picks.
+	const [botId, setBotId] = useState(bots[0]?.id);
+	const bot = bots.find((bot) => bot.id === botId) ?? bots[0];
+
 	const transport = useTriggerChatTransport<typeof chatAgent>({
 		task: "chat",
 		accessToken: ({ chatId }) => mintChatAccessToken(chatId),
 		startSession: ({ chatId, clientData }) =>
 			startChatSession({ chatId, clientData }),
+		// Sent as metadata with every turn, so the agent answers as this bot.
+		// The transport picks up changes without being rebuilt.
+		clientData: { botId: bot?.id },
 	});
 	// The hook also seeds the transport's resume cursor from the transcript.
 	// Promise.resolve turns the streamed promise into one the hook can chain.
@@ -164,7 +185,10 @@ export function Chat({
 				</div>
 				<ChatComposer
 					chat={chat}
-					name={name}
+					name={bot?.name ?? name}
+					bots={bots}
+					botId={bot?.id}
+					onBotChange={setBotId}
 					sendRef={sendRef}
 					onDraftStart={preload}
 					onStop={stop}
@@ -401,12 +425,18 @@ const ChatMessage = memo(function ChatMessage({
 function ChatComposer({
 	chat,
 	name,
+	bots,
+	botId,
+	onBotChange,
 	sendRef,
 	onDraftStart,
 	onStop,
 }: {
 	chat: ChatState<ChatUIMessage> | null;
 	name: string;
+	bots: ChatBot[];
+	botId: string | undefined;
+	onBotChange: (botId: string) => void;
 	sendRef: React.RefObject<((text: string) => void) | null>;
 	onDraftStart: () => void;
 	onStop: () => void;
@@ -453,6 +483,10 @@ function ChatComposer({
 					}}
 				/>
 				<InputGroupAddon align="block-end">
+					{/* Only a group has a choice of bot. */}
+					{bots.length > 1 && botId && (
+						<BotSelect bots={bots} botId={botId} onBotChange={onBotChange} />
+					)}
 					{chat ? (
 						<ChatComposerSubmit chat={chat} hasText={hasText} onStop={onStop} />
 					) : (
@@ -502,6 +536,56 @@ function ChatComposerSubmit({
 	}
 
 	return <SendButton disabled={!hasText} />;
+}
+
+type ChatBot = { id: string; name: string; avatar: string };
+
+// Picks which of a group's bots answers the next message.
+function BotSelect({
+	bots,
+	botId,
+	onBotChange,
+}: {
+	bots: ChatBot[];
+	botId: string;
+	onBotChange: (botId: string) => void;
+}) {
+	const current = bots.find((bot) => bot.id === botId) ?? bots[0];
+
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger
+				render={
+					<InputGroupButton
+						type="button"
+						size="sm"
+						variant="ghost"
+						aria-label={`Reply from ${current.name}`}
+					/>
+				}
+			>
+				<ChatAvatar seed={current.avatar} className="size-4" />
+				{current.name}
+				<ChevronDownIcon />
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="start" className="w-48">
+				<DropdownMenuGroup>
+					<DropdownMenuLabel>Reply from</DropdownMenuLabel>
+					<DropdownMenuRadioGroup
+						value={botId}
+						onValueChange={(value) => onBotChange(value)}
+					>
+						{bots.map((bot) => (
+							<DropdownMenuRadioItem key={bot.id} value={bot.id} closeOnClick>
+								<ChatAvatar seed={bot.avatar} className="size-4" />
+								{bot.name}
+							</DropdownMenuRadioItem>
+						))}
+					</DropdownMenuRadioGroup>
+				</DropdownMenuGroup>
+			</DropdownMenuContent>
+		</DropdownMenu>
+	);
 }
 
 function SendButton({ disabled }: { disabled: boolean }) {

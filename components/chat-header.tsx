@@ -1,6 +1,6 @@
 import { BotDialog } from "@/components/bot-dialog";
-import { ChatAvatar } from "@/components/chat-avatar";
 import { DesktopPanelToggle } from "@/components/desktop-panel";
+import { GroupChatAvatar } from "@/components/group-chat-avatar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Chat } from "@/queries/chat";
@@ -17,10 +17,12 @@ export function ChatHeader({ children }: { children: React.ReactNode }) {
 
 // The chat's avatar and name. Reads the database, so it streams in.
 export function ChatHeaderTitle({ chat }: { chat: Chat }) {
-	if (!chat.bot) {
+	// Only a direct chat's title edits its bot; a group has several.
+	const bot = chat.kind === "direct" ? chat.bots[0] : undefined;
+	if (!bot) {
 		return (
 			<>
-				<ChatAvatar seed={chat.avatar} className="size-5" />
+				<GroupChatAvatar seeds={chat.avatars} className="size-5" />
 				<h1 className="truncate text-sm font-medium">{chat.name}</h1>
 			</>
 		);
@@ -28,19 +30,19 @@ export function ChatHeaderTitle({ chat }: { chat: Chat }) {
 
 	return (
 		<BotDialog
-			bot={chat.bot}
+			bot={bot}
 			trigger={
 				// Avatar and name share one button, so either opens the editor.
 				<Button
 					type="button"
 					variant="ghost"
 					size="sm"
-					aria-label={`Edit ${chat.bot.name}`}
+					aria-label={`Edit ${bot.name}`}
 					// Pull back by the button's start padding so the avatar stays aligned.
 					className="-ml-1.5 min-w-0"
 				>
-					<ChatAvatar
-						seed={chat.avatar}
+					<GroupChatAvatar
+						seeds={chat.avatars}
 						data-icon="inline-start"
 						className="size-5"
 					/>

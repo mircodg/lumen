@@ -1,7 +1,7 @@
 import { formatDistanceToNowStrict } from "date-fns";
 import { io } from "next/cache";
-import { ChatAvatar } from "@/components/chat-avatar";
 import { ChatListButton } from "@/components/chat-list-button";
+import { GroupChatAvatar } from "@/components/group-chat-avatar";
 import {
 	SidebarGroup,
 	SidebarGroupContent,
@@ -24,8 +24,8 @@ export async function ChatList() {
 					{chats.map((chat) => (
 						<SidebarMenuItem key={chat.id}>
 							<ChatListButton chatId={chat.id} tooltip={chat.name}>
-								<ChatAvatar
-									seed={chat.avatar}
+								<GroupChatAvatar
+									seeds={chat.avatars}
 									className="transition-[width,height] group-data-[collapsible=icon]:size-7"
 								/>
 								<div className="grid min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">
