@@ -1,26 +1,16 @@
-import { MonitorIcon } from "lucide-react";
 import { BotDialog } from "@/components/bot-dialog";
 import { ChatAvatar } from "@/components/chat-avatar";
+import { DesktopPanelToggle } from "@/components/desktop-panel";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Chat } from "@/queries/chat";
 
-// The static shell. Rendered by the chats layout, so it stays mounted while
-// switching chats; only the title passed as children changes.
+// The static shell. Paints at once; only the title passed as children streams.
 export function ChatHeader({ children }: { children: React.ReactNode }) {
 	return (
 		<header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
 			{children}
-			{/* Not wired up yet. */}
-			<Button
-				type="button"
-				variant="ghost"
-				size="icon-sm"
-				aria-label="Desktop"
-				className="ml-auto"
-			>
-				<MonitorIcon />
-			</Button>
+			<DesktopPanelToggle />
 		</header>
 	);
 }

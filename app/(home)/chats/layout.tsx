@@ -1,15 +1,7 @@
-import { ChatHeader } from "@/components/chat-header";
-
-// Lives above [chatId], so the header shell persists across chat switches.
-// A layout here doesn't receive chatId, so the title comes from the @header
-// slot, which does.
-export default function ChatsLayout({ children, header }: LayoutProps<"/chats">) {
+export default function ChatsLayout({ children }: LayoutProps<"/chats">) {
 	return (
 		// Viewport height, so the thread scrolls inside the page and the prompt
-		// stays pinned to the bottom.
-		<div className="flex h-svh flex-col">
-			<ChatHeader>{header}</ChatHeader>
-			{children}
-		</div>
+		// stays pinned to the bottom. The page composes the header and panels.
+		<div className="flex h-svh flex-col">{children}</div>
 	);
 }
