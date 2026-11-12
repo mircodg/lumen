@@ -27,7 +27,7 @@ export const bots = pgTable(
 		job: text().notNull(),
 		// How it should go about the job.
 		instructions: text(),
-		// Third-party sandbox id, created lazily.
+		// Daytona sandbox id, created with the bot and deleted with it.
 		sandboxId: text(),
 		// Third-party user id.
 		userId: text().notNull(),
