@@ -10,6 +10,7 @@ import { DesktopPanel, DesktopPanelProvider } from "@/components/desktop-panel";
 import { ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getCurrentUser } from "@/lib/auth/user";
+import { getUserBots } from "@/queries/bot";
 import { getChat, getChatTranscript } from "@/queries/chat";
 
 export default function ChatPage(props: PageProps<"/chats/[chatId]">) {
@@ -56,11 +57,12 @@ async function ChatTitle({
 	params: PageProps<"/chats/[chatId]">["params"];
 }) {
 	const { chatId } = await params;
-	const chat = await getChat(chatId);
+	// Both cached per request; the sidebar already loads the bots.
+	const [chat, bots] = await Promise.all([getChat(chatId), getUserBots()]);
 	// The content renders the 404; the header just stays empty.
 	if (!chat) return null;
 
-	return <ChatHeaderTitle chat={chat} />;
+	return <ChatHeaderTitle chat={chat} bots={bots} />;
 }
 
 // Names the desktop after the bot it belongs to. Shares getChat's per-request

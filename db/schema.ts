@@ -139,3 +139,12 @@ export const createGroupChatSchema = insertChatSchema
 	});
 
 export type CreateGroupChatInput = z.input<typeof createGroupChatSchema>;
+
+// Editing a group changes the same fields the user filled in on create. The
+// bots are the members after the edit, existing ones first in join order.
+export const updateGroupChatSchema = createGroupChatSchema;
+
+export type UpdateGroupChatInput = z.input<typeof updateGroupChatSchema>;
+
+// The group fields the edit form starts from.
+export type EditableGroupChat = { id: string; name: string; botIds: string[] };

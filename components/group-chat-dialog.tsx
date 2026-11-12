@@ -1,9 +1,26 @@
 "use client";
 
 import { useForm } from "@tanstack/react-form";
+import { Trash2Icon } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { createGroupChat } from "@/actions/chat";
+import { useState } from "react";
+import {
+	createGroupChat,
+	deleteGroupChat,
+	updateGroupChat,
+} from "@/actions/chat";
 import { ChatAvatar } from "@/components/chat-avatar";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -14,6 +31,7 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
+	DialogTrigger,
 } from "@/components/ui/dialog";
 import {
 	Field,
@@ -27,31 +45,61 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "@/components/ui/toast";
-import { createGroupChatSchema } from "@/db/schema";
+import {
+	createGroupChatSchema,
+	type EditableGroupChat,
+	updateGroupChatSchema,
+} from "@/db/schema";
 import type { PickableBot } from "@/queries/bot";
 
-// Controlled, because it's opened from a dropdown menu item that unmounts when
-// the menu closes.
+type GroupChatDialogProps = {
+	// The bots a group can be made from.
+	bots: PickableBot[];
+	// Edits this group instead of creating a new one.
+	chat?: EditableGroupChat;
+} & (
+	| {
+			// The element that opens the dialog, e.g. a Button.
+			trigger: React.ReactElement;
+			open?: never;
+			onOpenChange?: never;
+	  }
+	| {
+			// Controlled from outside, e.g. opened by a dropdown menu item that
+			// unmounts when the menu closes and so can't be the trigger itself.
+			trigger?: never;
+			open: boolean;
+			onOpenChange: (open: boolean) => void;
+	  }
+);
+
 export function GroupChatDialog({
 	bots,
-	open,
+	chat,
+	trigger,
+	open: controlledOpen,
 	onOpenChange,
-}: {
-	bots: PickableBot[];
-	open: boolean;
-	onOpenChange: (open: boolean) => void;
-}) {
+}: GroupChatDialogProps) {
+	const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+	const open = controlledOpen ?? uncontrolledOpen;
+	const setOpen = onOpenChange ?? setUncontrolledOpen;
+
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
+		<Dialog open={open} onOpenChange={setOpen}>
+			{trigger && <DialogTrigger render={trigger} />}
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
-					<DialogTitle>New group chat</DialogTitle>
+					<DialogTitle>
+						{chat ? `Edit ${chat.name}` : "New group chat"}
+					</DialogTitle>
 					<DialogDescription>
-						Name the group and pick which bots are in it.
+						{chat
+							? "Rename the group or change which bots are in it."
+							: "Name the group and pick which bots are in it."}
 					</DialogDescription>
 				</DialogHeader>
 				{/* Mounted only while open, so every open starts with a fresh form. */}
-				<GroupChatForm bots={bots} onCreated={() => onOpenChange(false)} />
+				<GroupChatForm bots={bots} chat={chat} onSaved={() => setOpen(false)} />
 			</DialogContent>
 		</Dialog>
 	);
@@ -59,34 +107,60 @@ export function GroupChatDialog({
 
 function GroupChatForm({
 	bots,
-	onCreated,
+	chat,
+	onSaved,
 }: {
 	bots: PickableBot[];
-	onCreated: () => void;
+	chat?: EditableGroupChat;
+	onSaved: () => void;
 }) {
 	const router = useRouter();
+	const errorTitle = chat ? "Could not save group" : "Could not create group";
 
 	const form = useForm({
-		defaultValues: { name: "", botIds: [] as string[] },
-		validators: { onSubmit: createGroupChatSchema },
+		defaultValues: {
+			name: chat?.name ?? "",
+			botIds: chat?.botIds ?? ([] as string[]),
+		},
+		validators: {
+			onSubmit: chat ? updateGroupChatSchema : createGroupChatSchema,
+		},
 		onSubmit: async ({ value }) => {
 			try {
+				if (chat) {
+					const result = await updateGroupChat(chat.id, value);
+					if (!result.ok) {
+						toast.add({
+							type: "error",
+							title: errorTitle,
+							description: result.error,
+						});
+						return;
+					}
+					toast.add({
+						type: "success",
+						title: `${result.chat.name} is updated`,
+					});
+					onSaved();
+					return;
+				}
+
 				const result = await createGroupChat(value);
 				if (!result.ok) {
 					toast.add({
 						type: "error",
-						title: "Could not create group",
+						title: errorTitle,
 						description: result.error,
 					});
 					return;
 				}
 				toast.add({ type: "success", title: `${value.name.trim()} is ready` });
-				onCreated();
+				onSaved();
 				router.push(`/chats/${result.chatId}`);
 			} catch {
 				toast.add({
 					type: "error",
-					title: "Could not create group",
+					title: errorTitle,
 					description: "Network error. Please try again.",
 				});
 			}
@@ -197,6 +271,13 @@ function GroupChatForm({
 						</FieldGroup>
 
 						<DialogFooter>
+							{chat && (
+								<DeleteGroupChatButton
+									chat={chat}
+									disabled={pending}
+									onDeleted={onSaved}
+								/>
+							)}
 							<DialogClose
 								render={<Button type="button" variant="outline" />}
 								disabled={pending}
@@ -205,12 +286,102 @@ function GroupChatForm({
 							</DialogClose>
 							<Button type="submit" disabled={pending}>
 								{pending && <Spinner data-icon="inline-start" />}
-								Create group
+								{chat ? "Save changes" : "Create group"}
 							</Button>
 						</DialogFooter>
 					</>
 				)}
 			</form.Subscribe>
 		</form>
+	);
+}
+
+function DeleteGroupChatButton({
+	chat,
+	disabled,
+	onDeleted,
+}: {
+	chat: EditableGroupChat;
+	disabled: boolean;
+	onDeleted: () => void;
+}) {
+	const router = useRouter();
+	// Controlled so the confirmation stays open while the delete is pending.
+	const [open, setOpen] = useState(false);
+	const [pending, setPending] = useState(false);
+
+	async function handleDelete() {
+		setPending(true);
+		try {
+			const result = await deleteGroupChat(chat.id);
+			if (!result.ok) {
+				toast.add({
+					type: "error",
+					title: "Could not delete group",
+					description: result.error,
+				});
+				return;
+			}
+			toast.add({ type: "success", title: `${result.chat.name} is deleted` });
+			setOpen(false);
+			onDeleted();
+			// The current chat is gone. Leave it, then refresh so the sidebar
+			// in the shared layout drops it too.
+			router.replace("/");
+			router.refresh();
+		} catch {
+			toast.add({
+				type: "error",
+				title: "Could not delete group",
+				description: "Network error. Please try again.",
+			});
+		} finally {
+			setPending(false);
+		}
+	}
+
+	return (
+		<AlertDialog
+			open={open}
+			onOpenChange={(next) => {
+				if (!pending) setOpen(next);
+			}}
+		>
+			<AlertDialogTrigger
+				render={
+					<Button
+						type="button"
+						variant="destructive"
+						// Sits apart from Cancel and Save on wide screens.
+						className="sm:mr-auto"
+					/>
+				}
+				disabled={disabled}
+			>
+				<Trash2Icon data-icon="inline-start" />
+				Delete
+			</AlertDialogTrigger>
+			<AlertDialogContent>
+				<AlertDialogHeader>
+					<AlertDialogTitle>Delete {chat.name}?</AlertDialogTitle>
+					<AlertDialogDescription>
+						This deletes the group chat and its messages. Its bots stay. It
+						can&apos;t be undone.
+					</AlertDialogDescription>
+				</AlertDialogHeader>
+				<AlertDialogFooter>
+					<AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+					<AlertDialogAction
+						type="button"
+						variant="destructive"
+						disabled={pending}
+						onClick={handleDelete}
+					>
+						{pending && <Spinner data-icon="inline-start" />}
+						Delete
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
 	);
 }
