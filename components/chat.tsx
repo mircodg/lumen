@@ -3,19 +3,20 @@
 import { Chat as ChatState, useChat } from "@ai-sdk/react";
 import {
 	type LoadTranscriptResult,
+	type UsePendingMessagesOptions,
 	useLoadTranscript,
+	usePendingMessages,
 	useTriggerChatTransport,
 } from "@trigger.dev/sdk/chat/react";
-import type { UIMessage } from "ai";
 import {
 	ArrowUpIcon,
 	CircleAlertIcon,
 	MessageCircleDashedIcon,
 	SquareIcon,
 } from "lucide-react";
-import { memo, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { mintChatAccessToken, startChatSession } from "@/actions/chat";
-import { Markdown } from "@/components/markdown";
+import { AssistantParts, hasVisibleParts } from "@/components/chat-parts";
 import {
 	Alert,
 	AlertAction,
@@ -37,7 +38,11 @@ import {
 	InputGroupButton,
 	InputGroupTextarea,
 } from "@/components/ui/input-group";
-import { Message, MessageContent } from "@/components/ui/message";
+import {
+	Message,
+	MessageContent,
+	MessageFooter,
+} from "@/components/ui/message";
 import {
 	MessageScroller,
 	MessageScrollerButton,
@@ -47,7 +52,7 @@ import {
 	MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { chatAgent } from "@/trigger/chat";
+import type { ChatUIMessage, chatAgent } from "@/trigger/chat";
 
 // The conversation for one chat, run by the Trigger.dev chat agent in
 // trigger/chat.ts. The agent keeps the history in its transcript storage. The
@@ -82,13 +87,54 @@ export function Chat({
 		() =>
 			loaded.isLoading
 				? null
-				: new ChatState<UIMessage>({
+				: new ChatState<ChatUIMessage>({
 						id: chatId,
-						messages: loaded.messages,
+						// Stored untyped; the agent wrote it with these tools.
+						messages: loaded.messages as ChatUIMessage[],
 						transport,
 					}),
 		[chatId, transport, loaded.isLoading, loaded.messages],
 	);
+
+	// A reload mid-reply picks the reply back up. The transport can only
+	// reconnect to a session it knows, and a fresh page knows none, so hand it
+	// one with a new token; the transcript load already seeded its cursor.
+	// When no reply is in flight, the server says so and the stream closes
+	// at once. A chat with no messages has no session yet, so it's skipped.
+	useEffect(() => {
+		if (!chat || chat.messages.length === 0) return;
+		let cancelled = false;
+
+		void (async () => {
+			try {
+				if (!transport.getSession(chatId)) {
+					const publicAccessToken = await mintChatAccessToken(chatId);
+					if (cancelled) return;
+					transport.setSession(chatId, { publicAccessToken });
+				}
+				if (!cancelled) await chat.resumeStream();
+			} catch (error) {
+				// Nothing to resume is not an error worth showing; the thread is
+				// already on screen from the transcript.
+				console.error("Could not resume the chat stream", error);
+			}
+		})();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [chat, chatId, transport]);
+
+	// After a resume, the local stop only closes this tab's stream, so Stop
+	// also tells the agent to stop generating.
+	function stop() {
+		void chat?.stop();
+		void transport.stopGeneration(chatId);
+	}
+
+	// The composer sends through the thread's pending-messages hook, which
+	// needs the chat's live state. The thread sets this once it mounts.
+	const sendRef = useRef<((text: string) => void) | null>(null);
 
 	// Creating the session and booting the agent's run takes a moment. Starting
 	// it when the user begins typing moves that wait off the first send.
@@ -105,12 +151,24 @@ export function Chat({
 			<div className="flex min-h-0 flex-1 flex-col">
 				<div className="min-h-0 flex-1">
 					{chat ? (
-						<ChatMessages chat={chat} name={name} />
+						<ChatMessages
+							chat={chat}
+							chatId={chatId}
+							name={name}
+							transport={transport}
+							sendRef={sendRef}
+						/>
 					) : (
 						<ChatMessagesSkeleton />
 					)}
 				</div>
-				<ChatComposer chat={chat} name={name} onDraftStart={preload} />
+				<ChatComposer
+					chat={chat}
+					name={name}
+					sendRef={sendRef}
+					onDraftStart={preload}
+					onStop={stop}
+				/>
 			</div>
 		</MessageScrollerProvider>
 	);
@@ -170,18 +228,44 @@ function ChatMessagesSkeleton() {
 	);
 }
 
-function isBusy(status: ChatState<UIMessage>["status"]) {
+function isBusy(status: ChatState<ChatUIMessage>["status"]) {
 	return status === "submitted" || status === "streaming";
 }
 
 function ChatMessages({
 	chat,
+	chatId,
 	name,
+	transport,
+	sendRef,
 }: {
-	chat: ChatState<UIMessage>;
+	chat: ChatState<ChatUIMessage>;
+	chatId: string;
 	name: string;
+	transport: UsePendingMessagesOptions["transport"];
+	sendRef: React.RefObject<((text: string) => void) | null>;
 }) {
-	const { messages, status, error, regenerate } = useChat({ chat });
+	const { messages, status, error, regenerate, setMessages, sendMessage } =
+		useChat({ chat });
+	// Sending while the agent works steers it: the message reaches the model at
+	// its next step. Sending while idle is a normal send.
+	const steering = usePendingMessages<ChatUIMessage>({
+		transport,
+		chatId,
+		status,
+		messages,
+		setMessages,
+		sendMessage,
+	});
+	useEffect(() => {
+		sendRef.current = steering.steer;
+		return () => {
+			sendRef.current = null;
+		};
+	}, [sendRef, steering.steer]);
+	// Sent mid-reply but not yet read by the agent. Once read, the message
+	// shows inside the reply where it landed (see AssistantParts).
+	const waiting = steering.pending.filter((message) => !message.injected);
 
 	if (messages.length === 0) {
 		return (
@@ -202,9 +286,9 @@ function ChatMessages({
 	const busy = isBusy(status);
 	const lastMessage = messages.at(-1);
 	// Waiting for the first token: the last message is still the user's, or an
-	// assistant message with no text yet.
+	// assistant message with nothing to show yet.
 	const pending =
-		busy && (lastMessage?.role === "user" || !messageText(lastMessage));
+		busy && (lastMessage?.role === "user" || !hasVisibleParts(lastMessage));
 
 	return (
 		<MessageScroller>
@@ -231,6 +315,22 @@ function ChatMessages({
 							</Message>
 						</MessageScrollerItem>
 					)}
+					{waiting.map((message) => (
+						<MessageScrollerItem key={message.id} messageId={message.id}>
+							<Message align="end">
+								<MessageContent>
+									<Bubble align="end" variant="outline">
+										<BubbleContent className="whitespace-pre-wrap">
+											{message.text}
+										</BubbleContent>
+									</Bubble>
+								</MessageContent>
+								<MessageFooter>
+									{busy ? `Waiting for ${name}'s next step` : "Sending…"}
+								</MessageFooter>
+							</Message>
+						</MessageScrollerItem>
+					))}
 					{error && (
 						<MessageScrollerItem messageId="error">
 							<Alert variant="destructive">
@@ -265,13 +365,11 @@ const ChatMessage = memo(function ChatMessage({
 	message,
 	streaming,
 }: {
-	message: UIMessage;
+	message: ChatUIMessage;
 	streaming: boolean;
 }) {
 	const isUser = message.role === "user";
-	const text = messageText(message);
-	// The assistant message exists before its first token.
-	if (!text) return null;
+	if (!hasVisibleParts(message)) return null;
 
 	return (
 		<MessageScrollerItem messageId={message.id} scrollAnchor={isUser}>
@@ -280,7 +378,7 @@ const ChatMessage = memo(function ChatMessage({
 					<MessageContent>
 						<Bubble align="end" variant="muted">
 							<BubbleContent className="whitespace-pre-wrap">
-								{text}
+								{messageText(message)}
 							</BubbleContent>
 						</Bubble>
 					</MessageContent>
@@ -288,7 +386,7 @@ const ChatMessage = memo(function ChatMessage({
 			) : (
 				<Message>
 					<MessageContent>
-						<Markdown streaming={streaming}>{text}</Markdown>
+						<AssistantParts parts={message.parts} streaming={streaming} />
 					</MessageContent>
 				</Message>
 			)}
@@ -298,15 +396,20 @@ const ChatMessage = memo(function ChatMessage({
 
 // Owns the draft, so typing re-renders the composer and not the thread.
 // `chat` is null while the history loads: the draft can be written, and it
-// can be sent once the thread is in.
+// can be sent once the thread is in. A send while the agent is working
+// steers it instead of waiting for the reply to finish.
 function ChatComposer({
 	chat,
 	name,
+	sendRef,
 	onDraftStart,
+	onStop,
 }: {
-	chat: ChatState<UIMessage> | null;
+	chat: ChatState<ChatUIMessage> | null;
 	name: string;
+	sendRef: React.RefObject<((text: string) => void) | null>;
 	onDraftStart: () => void;
+	onStop: () => void;
 }) {
 	const [text, setText] = useState("");
 	const formRef = useRef<HTMLFormElement>(null);
@@ -314,11 +417,10 @@ function ChatComposer({
 
 	function onSubmit(event: React.FormEvent<HTMLFormElement>) {
 		event.preventDefault();
-		// The status is read here rather than subscribed to: it only matters at
-		// the moment of sending.
-		if (!chat || !hasText || isBusy(chat.status)) return;
+		const send = sendRef.current;
+		if (!chat || !hasText || !send) return;
 
-		void chat.sendMessage({ text: text.trim() });
+		send(text.trim());
 		setText("");
 	}
 
@@ -352,7 +454,7 @@ function ChatComposer({
 				/>
 				<InputGroupAddon align="block-end">
 					{chat ? (
-						<ChatComposerSubmit chat={chat} hasText={hasText} />
+						<ChatComposerSubmit chat={chat} hasText={hasText} onStop={onStop} />
 					) : (
 						<SendButton disabled />
 					)}
@@ -362,29 +464,40 @@ function ChatComposer({
 	);
 }
 
-// Send, or Stop while a reply is on its way. Split out so only this button
-// follows the chat's status.
+// Send, or Stop while a reply is on its way, with Send beside it once there's
+// a message to steer with. Split out so only these buttons follow the chat's
+// status.
 function ChatComposerSubmit({
 	chat,
 	hasText,
+	onStop,
 }: {
-	chat: ChatState<UIMessage>;
+	chat: ChatState<ChatUIMessage>;
 	hasText: boolean;
+	onStop: () => void;
 }) {
-	const { status, stop } = useChat({ chat });
+	const { status } = useChat({ chat });
 
 	if (isBusy(status)) {
 		return (
-			<InputGroupButton
-				type="button"
-				variant="default"
-				size="icon-sm"
-				className="ml-auto"
-				onClick={() => void stop()}
-			>
-				<SquareIcon />
-				<span className="sr-only">Stop</span>
-			</InputGroupButton>
+			<>
+				<InputGroupButton
+					type="button"
+					variant={hasText ? "outline" : "default"}
+					size="icon-sm"
+					className="ml-auto"
+					onClick={onStop}
+				>
+					<SquareIcon />
+					<span className="sr-only">Stop</span>
+				</InputGroupButton>
+				{hasText && (
+					<InputGroupButton type="submit" variant="default" size="icon-sm">
+						<ArrowUpIcon />
+						<span className="sr-only">Send</span>
+					</InputGroupButton>
+				)}
+			</>
 		);
 	}
 
@@ -406,9 +519,7 @@ function SendButton({ disabled }: { disabled: boolean }) {
 	);
 }
 
-function messageText(message: UIMessage | undefined) {
-	if (!message) return "";
-
+function messageText(message: ChatUIMessage) {
 	return message.parts
 		.filter((part) => part.type === "text")
 		.map((part) => part.text)
