@@ -25,7 +25,7 @@ import {
 	AlertDescription,
 	AlertTitle,
 } from "@/components/ui/alert";
-import { Bubble, BubbleContent } from "@/components/ui/bubble";
+import { Bubble, BubbleContent, BubbleReactions } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -157,7 +157,7 @@ export function Chat({
 
 	// The composer sends through the thread's pending-messages hook, which
 	// needs the chat's live state. The thread sets this once it mounts.
-	const sendRef = useRef<((text: string) => void) | null>(null);
+	const sendRef = useRef<Send | null>(null);
 
 	// Creating the session and booting the agent's run takes a moment. Starting
 	// it when the user begins typing moves that wait off the first send.
@@ -275,7 +275,7 @@ function ChatMessages({
 	name: string;
 	bots: ChatBot[];
 	transport: UsePendingMessagesOptions["transport"];
-	sendRef: React.RefObject<((text: string) => void) | null>;
+	sendRef: React.RefObject<Send | null>;
 	onHandoff: (botId: string) => void;
 }) {
 	const { messages, status, error, regenerate, setMessages, sendMessage } =
@@ -290,12 +290,19 @@ function ChatMessages({
 		setMessages,
 		sendMessage,
 	});
+	// An idle send is stamped with the bot it's addressed to, so the bubble can
+	// say who it was for. The steer helper can't set message metadata, and a
+	// steered message lands inside the reply of the bot already answering.
+	const { steer } = steering;
 	useEffect(() => {
-		sendRef.current = steering.steer;
+		sendRef.current = (text, botId) => {
+			if (status === "streaming") steer(text);
+			else void sendMessage({ text, metadata: { botId } });
+		};
 		return () => {
 			sendRef.current = null;
 		};
-	}, [sendRef, steering.steer]);
+	}, [sendRef, steer, status, sendMessage]);
 	// A handoff in the newest reply moves the composer to the bot that took
 	// over. Ones already in the transcript when the thread opened don't.
 	const handoff = latestHandoff(messages.at(-1));
@@ -422,16 +429,31 @@ const ChatMessage = memo(function ChatMessage({
 }) {
 	const isUser = message.role === "user";
 	if (!hasVisibleParts(message)) return null;
+	// In a group, the bot the owner's message was addressed to.
+	const addressee = isUser
+		? bots?.find((bot) => bot.id === message.metadata?.botId)
+		: undefined;
 
 	return (
 		<MessageScrollerItem messageId={message.id} scrollAnchor={isUser}>
 			{isUser ? (
 				<Message align="end">
 					<MessageContent>
-						<Bubble align="end" variant="muted">
+						<Bubble
+							align="end"
+							variant="muted"
+							// Room for the addressee pill hanging off the bottom edge.
+							className={addressee ? "mb-3" : undefined}
+						>
 							<BubbleContent className="whitespace-pre-wrap">
 								{messageText(message)}
 							</BubbleContent>
+							{addressee && (
+								<BubbleReactions className="gap-1 pr-2 text-xs font-medium ring-background">
+									<ChatAvatar seed={addressee.avatar} className="size-3.5" />
+									{addressee.name}
+								</BubbleReactions>
+							)}
 						</Bubble>
 					</MessageContent>
 				</Message>
@@ -540,7 +562,7 @@ function ChatComposer({
 	bots: ChatBot[];
 	botId: string | undefined;
 	onBotChange: (botId: string) => void;
-	sendRef: React.RefObject<((text: string) => void) | null>;
+	sendRef: React.RefObject<Send | null>;
 	onDraftStart: () => void;
 	onStop: () => void;
 }) {
@@ -553,7 +575,7 @@ function ChatComposer({
 		const send = sendRef.current;
 		if (!chat || !hasText || !send) return;
 
-		send(text.trim());
+		send(text.trim(), botId);
 		setText("");
 	}
 
@@ -642,6 +664,9 @@ function ChatComposerSubmit({
 }
 
 type ChatBot = { id: string; name: string; avatar: string };
+
+// Sends the composer's text, addressed to the picked bot.
+type Send = (text: string, botId: string | undefined) => void;
 
 // Picks which of a group's bots answers the next message.
 function BotSelect({

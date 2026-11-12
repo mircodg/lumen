@@ -88,7 +88,8 @@ export const chatAgent = chat
 	});
 
 // Which bot wrote a reply: the one that started it. Handoff parts in the
-// reply name the bots that took over. Unset on the owner's own messages.
+// reply name the bots that took over. On the owner's messages in a group
+// chat, the bot the message was addressed to (set by the composer).
 export type ChatMessageMetadata = { botId?: string };
 
 export type ChatUIMessage = UIMessage<
