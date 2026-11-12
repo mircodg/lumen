@@ -12,10 +12,18 @@ import * as z from "zod";
 import { db } from "@/db";
 import { chatMembers } from "@/db/schema";
 import { connectBotSandbox } from "@/lib/daytona";
-import { createSandboxTools, type SandboxTools } from "@/trigger/tools";
+import {
+	type ChatTools,
+	createHandoffTool,
+	createSandboxTools,
+} from "@/trigger/tools";
 
 // Gemini Flash is on the Gemini API free tier. Reads GOOGLE_GENERATIVE_AI_API_KEY.
 const model = google("gemini-3.5-flash-lite");
+
+// At most this many handoffs in one turn, so bots can't pass a request back
+// and forth without anyone answering it.
+const MAX_HANDOFFS = 2;
 
 // One long-lived run per chat. The conversation is kept by the platform's
 // default transcript storage, keyed by chat id, so a reload or a fresh run
@@ -25,43 +33,53 @@ const model = google("gemini-3.5-flash-lite");
 // In a group chat, the composer picks which bot answers. Its id arrives with
 // each turn as the transport's client data, and that bot answers the turn
 // with its own instructions and sandbox. Its reply is stamped with the bot's
-// id, so the thread can show who wrote it.
+// id, so the thread can show who wrote it. A bot can hand the turn to
+// another bot with the handoff tool: that bot takes over from the next step
+// of the same reply, and the handoff part records who wrote what follows.
 export const chatAgent = chat
 	.withUIMessage<ChatUIMessage>()
 	.withClientData({ schema: z.object({ botId: z.string().optional() }) })
 	.agent({
 		id: "chat",
-		// Declared here as well as on streamText so each tool's toModelOutput
-		// (screenshots as images) is re-applied to history on later turns.
-		// Resolved per turn, so the tools work in the turn's bot's sandbox.
-		tools: ({ chatId, clientData }) =>
-			createSandboxTools(sandboxConnector(chatId, clientData?.botId)),
+		// Declared here so each tool's toModelOutput (screenshots as images) is
+		// re-applied to history on later turns. Only the definitions matter:
+		// run passes each turn's own working set, so these never execute.
+		tools: {
+			...createSandboxTools(notThisTurn),
+			handoff: createHandoffTool(notThisTurn),
+		},
 		// Messages the owner sends mid-reply steer it: they're added to the
 		// model's context at the next step boundary (between tool calls). One that
 		// arrives after the last step is answered as the next turn instead.
 		pendingMessages: { shouldInject: () => true },
-		run: async ({
-			chatId,
-			clientData,
-			messages,
-			tools,
-			signal,
-			streamText,
-		}) => {
+		run: async ({ chatId, clientData, messages, signal, streamText }) => {
 			// Read every turn, so bot edits and the bot picked apply to the next reply.
-			const bot = await getChatBot(chatId, clientData?.botId);
-			// Sent with the reply's start chunk and saved with it in the transcript.
-			if (bot) {
-				chat.setUIMessageStreamOptions({
-					messageMetadata: () => ({ botId: bot.id }),
+			const bots = await getChatBots(chatId);
+			// The picked bot when it's in the chat, else the chat's first one. botId
+			// comes from the browser, so it's only matched against the chat's members.
+			const first = bots.find((bot) => bot.id === clientData?.botId) ?? bots[0];
+			if (!first) {
+				return streamText({
+					model,
+					instructions: "You are a helpful assistant.",
+					messages,
+					abortSignal: signal,
 				});
 			}
 
+			// Sent with the reply's start chunk and saved with it in the transcript.
+			chat.setUIMessageStreamOptions({
+				messageMetadata: () => ({ botId: first.id }),
+			});
+
+			const turn = createTurn(bots, first);
 			return streamText({
 				model,
-				instructions: botInstructions(bot),
+				instructions: turn.instructions(),
 				messages,
-				tools,
+				tools: turn.tools,
+				// Runs after the SDK's own step preparation (steering, injection).
+				prepareStep: turn.prepareStep,
 				// Computer use takes many small steps: look, click, look again.
 				stopWhen: isStepCount(40),
 				abortSignal: signal,
@@ -69,37 +87,102 @@ export const chatAgent = chat
 		},
 	});
 
-// Which bot wrote a reply. Unset on the owner's own messages.
+// Which bot wrote a reply: the one that started it. Handoff parts in the
+// reply name the bots that took over. Unset on the owner's own messages.
 export type ChatMessageMetadata = { botId?: string };
 
 export type ChatUIMessage = UIMessage<
 	ChatMessageMetadata,
 	UIDataTypes,
-	InferUITools<SandboxTools>
+	InferUITools<ChatTools>
 >;
 
-// Connects to the chat's bot sandbox on first use, then reuses it for the
-// rest of the turn. A failed connect is retried by the next tool call.
-function sandboxConnector(chatId: string, botId: string | undefined) {
-	let sandbox: Promise<Sandbox> | undefined;
+function notThisTurn(): never {
+	throw new Error("This tool is only run through a turn's own tool set.");
+}
 
-	return () => {
-		sandbox ??= (async () => {
-			const bot = await getChatBot(chatId, botId);
-			if (!bot?.sandboxId) throw new Error("This bot has no sandbox.");
-			return connectBotSandbox(bot.sandboxId);
-		})().catch((error) => {
-			sandbox = undefined;
-			throw error;
-		});
+// One turn's state: which bot is speaking, and the tools it works with. A
+// handoff picks the next speaker, and prepareStep switches to it at the next
+// step boundary. Tool calls made in the same step as the handoff still run
+// as the bot that made them.
+function createTurn(bots: ChatBot[], first: ChatBot) {
+	const group = bots.length > 1;
+	let speaker = first;
+	let next = first;
+	let handoff: Handoff | undefined;
+	let handoffs = 0;
+	const authors = group ? replyAuthors(bots) : [];
+
+	// Each bot's sandbox connects on its first use in the turn, then is reused.
+	// A failed connect is retried by the next tool call.
+	const sandboxes = new Map<string, Promise<Sandbox>>();
+	function getSandbox() {
+		const bot = speaker;
+		let sandbox = sandboxes.get(bot.id);
+		if (!sandbox) {
+			sandbox = (async () => {
+				if (!bot.sandboxId) throw new Error("This bot has no sandbox.");
+				return connectBotSandbox(bot.sandboxId);
+			})().catch((error) => {
+				sandboxes.delete(bot.id);
+				throw error;
+			});
+			sandboxes.set(bot.id, sandbox);
+		}
 		return sandbox;
+	}
+
+	async function handOff(botId: string, note: string) {
+		if (next !== speaker) {
+			throw new Error("You already handed off in this step.");
+		}
+		if (handoffs >= MAX_HANDOFFS) {
+			throw new Error(
+				"This request has already been handed off too many times. Answer it yourself.",
+			);
+		}
+		const target = bots.find((bot) => bot.id === botId);
+		if (!target) {
+			throw new Error(
+				`No bot with id "${botId}" is in this chat. The bots are: ${bots.map((bot) => `${bot.name} (id: ${bot.id})`).join(", ")}.`,
+			);
+		}
+		if (target.id === speaker.id) {
+			throw new Error("That is you. Answer the request yourself.");
+		}
+
+		handoffs += 1;
+		next = target;
+		handoff = { from: speaker, note };
+		return { botId: target.id, name: target.name, note };
+	}
+
+	const sandboxTools = createSandboxTools(getSandbox);
+
+	function instructions() {
+		return botInstructions(speaker, group ? { bots, authors, handoff } : null);
+	}
+
+	return {
+		instructions,
+		// A chat with one bot has no one to hand off to.
+		tools: group
+			? { ...sandboxTools, handoff: createHandoffTool(handOff) }
+			: sandboxTools,
+		// Returned instructions carry forward to later steps, so they're only
+		// sent when the speaker changes.
+		prepareStep: () => {
+			if (next === speaker) return undefined;
+			speaker = next;
+			return { instructions: instructions() };
+		},
 	};
 }
 
-// The bot answering this turn: the picked one when it's in the chat, else
-// the chat's first bot, or null when it has none. botId comes from the
-// browser, so it's only matched against the chat's own members.
-async function getChatBot(chatId: string, botId: string | undefined) {
+type Handoff = { from: ChatBot; note: string };
+
+// The chat's bots, in join order.
+async function getChatBots(chatId: string) {
 	const members = await db.query.chatMembers.findMany({
 		where: eq(chatMembers.chatId, chatId),
 		orderBy: asc(chatMembers.joinedAt),
@@ -115,21 +198,53 @@ async function getChatBot(chatId: string, botId: string | undefined) {
 			},
 		},
 	});
-	const member = members.find((member) => member.botId === botId) ?? members[0];
-	return member?.bot ?? null;
+	return members.map((member) => member.bot);
 }
 
-type ChatBot = NonNullable<Awaited<ReturnType<typeof getChatBot>>>;
+type ChatBot = Awaited<ReturnType<typeof getChatBots>>[number];
+
+// Who wrote each reply so far, oldest first, as names. The model sees earlier
+// replies as plain assistant messages, so this tells it which were whose.
+// Only the latest few, to keep the prompt short.
+function replyAuthors(bots: ChatBot[]) {
+	const nameOf = (botId: string) =>
+		bots.find((bot) => bot.id === botId)?.name ?? "a bot no longer in this chat";
+
+	return (chat.history.all() as ChatUIMessage[])
+		.filter((message) => message.role === "assistant")
+		.map((message) => {
+			const ids = [
+				message.metadata?.botId,
+				...message.parts.flatMap((part) =>
+					part.type === "tool-handoff" && part.state === "output-available"
+						? [part.output.botId]
+						: [],
+				),
+			].filter((id): id is string => Boolean(id));
+			return ids.map(nameOf).join(", then (after a handoff) ");
+		})
+		.filter(Boolean)
+		.slice(-20);
+}
+
+type GroupContext = {
+	bots: ChatBot[];
+	authors: string[];
+	handoff: Handoff | undefined;
+};
 
 // The system prompt. Fixed sections first, then the owner's own instructions,
 // so theirs read as the most specific guidance.
-function botInstructions(bot: ChatBot | null) {
-	if (!bot) return "You are a helpful assistant.";
-
+// In a group chat, the group's sections come after the bot's own setup, and
+// a handoff's note comes last of the fixed ones, as the most immediate context.
+function botInstructions(bot: ChatBot, group: GroupContext | null) {
 	return [
 		identitySection(bot),
 		bot.sandboxId ? SANDBOX_SECTION : null,
 		BEHAVIOR_SECTION,
+		group ? groupSection(bot, group) : null,
+		group ? HANDOFF_SECTION : null,
+		group?.handoff ? handedToYouSection(group.handoff) : null,
 		bot.instructions
 			? `# Instructions from your owner\n\n${bot.instructions}`
 			: null,
@@ -164,3 +279,45 @@ const BEHAVIOR_SECTION = `# How you work
 - Be direct and concise. Lead with the answer, then add detail only when it helps.
 - Ask a short clarifying question when a request is ambiguous enough that guessing would waste your owner's time.
 - Be honest about what you know and what you have done. Never claim to have taken an action, run something, or checked something that you did not.`;
+
+function groupSection(bot: ChatBot, { bots, authors }: GroupContext) {
+	const roster = bots
+		.map(
+			(member) =>
+				`- ${member.name} (id: ${member.id})${member.id === bot.id ? ", that is you" : ""}: ${member.job}`,
+		)
+		.join("\n");
+	const history =
+		authors.length > 0
+			? `\n\nWho wrote the replies so far, oldest first:\n\n${authors.map((author, index) => `${index + 1}. ${author}`).join("\n")}`
+			: "";
+
+	return `# This group chat
+
+This is a group chat. Your owner added several bots to it, each created for its own job, with its own instructions and its own sandbox. The bots in this chat:
+
+${roster}
+
+How a group chat works:
+
+- Your owner picks which bot answers each message, and only that bot replies. You are the one answering now.
+- Speak only for yourself. Do not write replies for other bots, and do not start your reply with your name; the chat already shows who wrote it.
+- The conversation includes replies from the other bots, shown to you as if they were your own. You did not write them or run their tool calls, and you cannot reach their sandboxes: files they made are in their sandbox, not yours. Build on what they said, and never present their work as yours.${history}`;
+}
+
+const HANDOFF_SECTION = `# Handing off
+
+When a request is clearly a better fit for another bot's job than yours, call handoff to pass it to that bot instead of answering it yourself. That bot takes over at once, in this same reply, so your owner does not have to ask again.
+
+- Decide before doing any work. If you hand off, you may first write one short sentence saying who you are handing to and why, then call handoff on its own and stop.
+- Write the note for the bot taking over: what your owner wants, and anything useful you already know or did, so it does not start from nothing.
+- Hand off only when another bot is clearly better suited. If the request fits your job, or no bot fits it better, answer it yourself. Never hand off just to avoid a hard task.
+- When your owner asks you by name to do something you can do, do it yourself.`;
+
+function handedToYouSection({ from, note }: Handoff) {
+	return `# You were handed this request
+
+${from.name} handed your owner's latest message to you, because it fits your job better than theirs.${note ? ` Their note: "${note}"` : ""}
+
+Answer it now, as yourself. Do not hand it back to ${from.name}. Hand it on only if it is clearly another bot's job.`;
+}

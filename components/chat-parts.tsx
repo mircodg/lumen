@@ -7,6 +7,7 @@ import {
 	FilePenIcon,
 	FileTextIcon,
 	FolderOpenIcon,
+	ForwardIcon,
 	KeyboardIcon,
 	LoaderCircleIcon,
 	MonitorIcon,
@@ -401,6 +402,20 @@ function describe(part: ToolPart): RowContent {
 					"Failed to capture the screen",
 				],
 			};
+		case "tool-handoff": {
+			// The target's name only arrives with the output.
+			const output = part.state === "output-available" ? part.output : null;
+			return {
+				icon: ForwardIcon,
+				verbs: ["Handing off", "Handed off", "Failed to hand off"],
+				subject: output ? `to ${output.name}` : "",
+				detail: output?.note && (
+					<p className="whitespace-pre-wrap text-muted-foreground text-sm">
+						{output.note}
+					</p>
+				),
+			};
+		}
 	}
 }
 

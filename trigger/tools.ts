@@ -193,6 +193,37 @@ export function createSandboxTools(getSandbox: () => Promise<Sandbox>) {
 
 export type SandboxTools = ReturnType<typeof createSandboxTools>;
 
+// Who a handoff passed the turn to. Stored in the transcript, so the thread
+// can show who wrote each part of a reply.
+export type HandoffOutput = { botId: string; name: string; note: string };
+
+// Passes the rest of the turn to another bot in a group chat. `handOff`
+// checks the target and switches the turn's speaker; it throws when the
+// handoff isn't allowed, and the model reads that as the tool's error.
+export function createHandoffTool(
+	handOff: (botId: string, note: string) => Promise<HandoffOutput>,
+) {
+	return tool({
+		description:
+			"Hand the owner's request to another bot in this group chat whose job fits it better. That bot takes over at once and answers in this same reply, with its own instructions, tools, and sandbox; you stop speaking. Call it on its own, as your last action.",
+		inputSchema: z.object({
+			botId: z
+				.string()
+				.describe("The id of the bot to hand to, from the list of bots in this chat."),
+			note: z
+				.string()
+				.describe(
+					"A short brief for that bot: what the owner wants, and anything you already found out or did. The owner sees it too.",
+				),
+		}),
+		execute: ({ botId, note }) => handOff(botId, note.trim()),
+	});
+}
+
+export type HandoffTool = ReturnType<typeof createHandoffTool>;
+
+export type ChatTools = SandboxTools & { handoff: HandoffTool };
+
 export type Screenshot = {
 	// Base64 JPEG.
 	image: string;

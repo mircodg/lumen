@@ -54,6 +54,7 @@ import {
 	MessageAvatar,
 	MessageContent,
 	MessageFooter,
+	MessageGroup,
 } from "@/components/ui/message";
 import {
 	MessageScroller,
@@ -180,6 +181,8 @@ export function Chat({
 							bots={bots}
 							transport={transport}
 							sendRef={sendRef}
+							// The bot that took over answers the next message too.
+							onHandoff={setBotId}
 						/>
 					) : (
 						<ChatMessagesSkeleton />
@@ -265,6 +268,7 @@ function ChatMessages({
 	bots,
 	transport,
 	sendRef,
+	onHandoff,
 }: {
 	chat: ChatState<ChatUIMessage>;
 	chatId: string;
@@ -272,6 +276,7 @@ function ChatMessages({
 	bots: ChatBot[];
 	transport: UsePendingMessagesOptions["transport"];
 	sendRef: React.RefObject<((text: string) => void) | null>;
+	onHandoff: (botId: string) => void;
 }) {
 	const { messages, status, error, regenerate, setMessages, sendMessage } =
 		useChat({ chat });
@@ -291,6 +296,20 @@ function ChatMessages({
 			sendRef.current = null;
 		};
 	}, [sendRef, steering.steer]);
+	// A handoff in the newest reply moves the composer to the bot that took
+	// over. Ones already in the transcript when the thread opened don't.
+	const handoff = latestHandoff(messages.at(-1));
+	const handoffId = handoff?.toolCallId;
+	const handoffBotId = handoff?.botId;
+	const seenHandoff = useRef(handoffId);
+	useEffect(() => {
+		if (!handoffId || !handoffBotId || handoffId === seenHandoff.current) {
+			return;
+		}
+		seenHandoff.current = handoffId;
+		onHandoff(handoffBotId);
+	}, [handoffId, handoffBotId, onHandoff]);
+
 	// Sent mid-reply but not yet read by the agent. Once read, the message
 	// shows inside the reply where it landed (see AssistantParts).
 	const waiting = steering.pending.filter((message) => !message.injected);
@@ -330,11 +349,7 @@ function ChatMessages({
 							key={message.id}
 							message={message}
 							// Only a group needs to say which bot wrote a reply.
-							bot={
-								bots.length > 1
-									? bots.find((bot) => bot.id === message.metadata?.botId)
-									: undefined
-							}
+							bots={bots.length > 1 ? bots : undefined}
 							streaming={busy && message === lastMessage}
 						/>
 					))}
@@ -397,12 +412,12 @@ function ChatMessages({
 // the rest of the thread skips rendering on every token.
 const ChatMessage = memo(function ChatMessage({
 	message,
-	bot,
+	bots,
 	streaming,
 }: {
 	message: ChatUIMessage;
-	// The bot that wrote this reply, shown beside it in a group chat.
-	bot: ChatBot | undefined;
+	// A group's bots, to show who wrote each part of a reply. Unset otherwise.
+	bots: ChatBot[] | undefined;
 	streaming: boolean;
 }) {
 	const isUser = message.role === "user";
@@ -420,14 +435,10 @@ const ChatMessage = memo(function ChatMessage({
 						</Bubble>
 					</MessageContent>
 				</Message>
+			) : bots ? (
+				<GroupReply message={message} bots={bots} streaming={streaming} />
 			) : (
 				<Message>
-					{bot && (
-						<MessageAvatar>
-							<ChatAvatar seed={bot.avatar} />
-							<span className="sr-only">{bot.name}</span>
-						</MessageAvatar>
-					)}
 					<MessageContent>
 						<AssistantParts parts={message.parts} streaming={streaming} />
 					</MessageContent>
@@ -436,6 +447,79 @@ const ChatMessage = memo(function ChatMessage({
 		</MessageScrollerItem>
 	);
 });
+
+// A group chat's reply, split where one bot handed off to another, each part
+// beside the avatar of the bot that wrote it. Reads like consecutive replies.
+function GroupReply({
+	message,
+	bots,
+	streaming,
+}: {
+	message: ChatUIMessage;
+	bots: ChatBot[];
+	streaming: boolean;
+}) {
+	const segments = replySegments(message).filter((segment) =>
+		hasVisibleParts({ ...message, parts: segment.parts }),
+	);
+
+	return (
+		<MessageGroup className="gap-6">
+			{segments.map((segment, index) => {
+				const bot = bots.find((bot) => bot.id === segment.botId);
+				return (
+					<Message key={segment.key}>
+						{bot && (
+							<MessageAvatar>
+								<ChatAvatar seed={bot.avatar} />
+								<span className="sr-only">{bot.name}</span>
+							</MessageAvatar>
+						)}
+						<MessageContent>
+							<AssistantParts
+								parts={segment.parts}
+								// Only the newest part can still be streaming.
+								streaming={streaming && index === segments.length - 1}
+							/>
+						</MessageContent>
+					</Message>
+				);
+			})}
+		</MessageGroup>
+	);
+}
+
+type Part = ChatUIMessage["parts"][number];
+
+// A reply's parts, split after each handoff. The first part is written by the
+// bot that started the reply; each later one by the bot handed to.
+function replySegments(message: ChatUIMessage) {
+	const segments: { key: string; botId?: string; parts: Part[] }[] = [
+		{ key: "start", botId: message.metadata?.botId, parts: [] },
+	];
+	for (const part of message.parts) {
+		segments[segments.length - 1].parts.push(part);
+		if (part.type === "tool-handoff" && part.state === "output-available") {
+			segments.push({
+				key: part.toolCallId,
+				botId: part.output.botId,
+				parts: [],
+			});
+		}
+	}
+	return segments;
+}
+
+// The last completed handoff in a reply, if any.
+function latestHandoff(message: ChatUIMessage | undefined) {
+	if (message?.role !== "assistant") return undefined;
+	for (const part of message.parts.toReversed()) {
+		if (part.type === "tool-handoff" && part.state === "output-available") {
+			return { toolCallId: part.toolCallId, botId: part.output.botId };
+		}
+	}
+	return undefined;
+}
 
 // Owns the draft, so typing re-renders the composer and not the thread.
 // `chat` is null while the history loads: the draft can be written, and it
