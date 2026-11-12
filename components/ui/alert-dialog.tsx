@@ -47,7 +47,9 @@ function AlertDialogContent({
 }) {
   return (
     <AlertDialogPortal>
-      <AlertDialogOverlay />
+      {/* Base UI hides backdrops of nested dialogs by default; force it so a
+          confirmation opened from another dialog still dims and blurs it. */}
+      <AlertDialogOverlay forceRender />
       <AlertDialogPrimitive.Popup
         data-slot="alert-dialog-content"
         data-size={size}

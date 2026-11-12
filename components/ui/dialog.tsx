@@ -49,7 +49,9 @@ function DialogContent({
 }) {
   return (
     <DialogPortal>
-      <DialogOverlay />
+      {/* Base UI hides backdrops of nested dialogs by default; force it so a
+          dialog opened from another dialog still dims and blurs it. */}
+      <DialogOverlay forceRender />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
