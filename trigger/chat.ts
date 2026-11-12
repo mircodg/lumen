@@ -1,7 +1,12 @@
 import { google } from "@ai-sdk/google";
 import type { Sandbox } from "@daytona/sdk";
-import { chat, type InferChatUIMessageFromTools } from "@trigger.dev/sdk/ai";
-import { isStepCount } from "ai";
+import { chat } from "@trigger.dev/sdk/ai";
+import {
+	type InferUITools,
+	isStepCount,
+	type UIDataTypes,
+	type UIMessage,
+} from "ai";
 import { asc, eq } from "drizzle-orm";
 import * as z from "zod";
 import { db } from "@/db";
@@ -19,7 +24,8 @@ const model = google("gemini-3.5-flash-lite");
 //
 // In a group chat, the composer picks which bot answers. Its id arrives with
 // each turn as the transport's client data, and that bot answers the turn
-// with its own instructions and sandbox.
+// with its own instructions and sandbox. Its reply is stamped with the bot's
+// id, so the thread can show who wrote it.
 export const chatAgent = chat
 	.withUIMessage<ChatUIMessage>()
 	.withClientData({ schema: z.object({ botId: z.string().optional() }) })
@@ -34,22 +40,43 @@ export const chatAgent = chat
 		// model's context at the next step boundary (between tool calls). One that
 		// arrives after the last step is answered as the next turn instead.
 		pendingMessages: { shouldInject: () => true },
-		run: async ({ chatId, clientData, messages, tools, signal, streamText }) =>
-			streamText({
+		run: async ({
+			chatId,
+			clientData,
+			messages,
+			tools,
+			signal,
+			streamText,
+		}) => {
+			// Read every turn, so bot edits and the bot picked apply to the next reply.
+			const bot = await getChatBot(chatId, clientData?.botId);
+			// Sent with the reply's start chunk and saved with it in the transcript.
+			if (bot) {
+				chat.setUIMessageStreamOptions({
+					messageMetadata: () => ({ botId: bot.id }),
+				});
+			}
+
+			return streamText({
 				model,
-				// Read every turn, so bot edits and the bot picked apply to the next reply.
-				instructions: botInstructions(
-					await getChatBot(chatId, clientData?.botId),
-				),
+				instructions: botInstructions(bot),
 				messages,
 				tools,
 				// Computer use takes many small steps: look, click, look again.
 				stopWhen: isStepCount(40),
 				abortSignal: signal,
-			}),
+			});
+		},
 	});
 
-export type ChatUIMessage = InferChatUIMessageFromTools<SandboxTools>;
+// Which bot wrote a reply. Unset on the owner's own messages.
+export type ChatMessageMetadata = { botId?: string };
+
+export type ChatUIMessage = UIMessage<
+	ChatMessageMetadata,
+	UIDataTypes,
+	InferUITools<SandboxTools>
+>;
 
 // Connects to the chat's bot sandbox on first use, then reuses it for the
 // rest of the turn. A failed connect is retried by the next tool call.
@@ -78,7 +105,13 @@ async function getChatBot(chatId: string, botId: string | undefined) {
 		orderBy: asc(chatMembers.joinedAt),
 		with: {
 			bot: {
-				columns: { name: true, job: true, instructions: true, sandboxId: true },
+				columns: {
+					id: true,
+					name: true,
+					job: true,
+					instructions: true,
+					sandboxId: true,
+				},
 			},
 		},
 	});

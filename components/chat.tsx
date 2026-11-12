@@ -51,6 +51,7 @@ import {
 } from "@/components/ui/input-group";
 import {
 	Message,
+	MessageAvatar,
 	MessageContent,
 	MessageFooter,
 } from "@/components/ui/message";
@@ -176,6 +177,7 @@ export function Chat({
 							chat={chat}
 							chatId={chatId}
 							name={name}
+							bots={bots}
 							transport={transport}
 							sendRef={sendRef}
 						/>
@@ -260,12 +262,14 @@ function ChatMessages({
 	chat,
 	chatId,
 	name,
+	bots,
 	transport,
 	sendRef,
 }: {
 	chat: ChatState<ChatUIMessage>;
 	chatId: string;
 	name: string;
+	bots: ChatBot[];
 	transport: UsePendingMessagesOptions["transport"];
 	sendRef: React.RefObject<((text: string) => void) | null>;
 }) {
@@ -325,6 +329,12 @@ function ChatMessages({
 						<ChatMessage
 							key={message.id}
 							message={message}
+							// Only a group needs to say which bot wrote a reply.
+							bot={
+								bots.length > 1
+									? bots.find((bot) => bot.id === message.metadata?.botId)
+									: undefined
+							}
 							streaming={busy && message === lastMessage}
 						/>
 					))}
@@ -387,9 +397,12 @@ function ChatMessages({
 // the rest of the thread skips rendering on every token.
 const ChatMessage = memo(function ChatMessage({
 	message,
+	bot,
 	streaming,
 }: {
 	message: ChatUIMessage;
+	// The bot that wrote this reply, shown beside it in a group chat.
+	bot: ChatBot | undefined;
 	streaming: boolean;
 }) {
 	const isUser = message.role === "user";
@@ -409,6 +422,12 @@ const ChatMessage = memo(function ChatMessage({
 				</Message>
 			) : (
 				<Message>
+					{bot && (
+						<MessageAvatar>
+							<ChatAvatar seed={bot.avatar} />
+							<span className="sr-only">{bot.name}</span>
+						</MessageAvatar>
+					)}
 					<MessageContent>
 						<AssistantParts parts={message.parts} streaming={streaming} />
 					</MessageContent>
