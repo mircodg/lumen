@@ -1,21 +1,16 @@
 "use client";
 
+import githubDark from "@pierre/highlights/themes/github-dark";
+import githubLight from "@pierre/highlights/themes/github-light";
+import { createHighlightsPlugin } from "@pierre/words/highlights";
+import { type Components, Markdown as Words } from "@pierre/words/react";
 import { cn } from "cn";
-import { type Components, defaultComponents, Streamdown } from "streamdown";
-import {
-	CodeBlock,
-	CodeBlockActions,
-	CodeBlockContent,
-	CodeBlockCopyButton,
-	CodeBlockHeader,
-	CodeBlockLine,
-	CodeBlockTitle,
-} from "@/components/ui/code-block";
-import { useHighlightedCode } from "@/hooks/use-highlighted-code";
 
-// Model output as Markdown. Streamdown closes half-written syntax while the
-// reply streams and sanitizes HTML and links. Fenced code renders with the
-// project's CodeBlock and Shiki setup, so it matches code everywhere else.
+// Model output as Markdown. Words repairs half-written syntax while the reply
+// streams, drops raw HTML, and checks link and image URLs. Keep the component
+// mounted for the same message and pass the full text on each update. Fenced
+// code uses the same GitHub light and dark colors as code elsewhere in the app;
+// globals.css picks the theme.
 export function Markdown({
 	children,
 	streaming = false,
@@ -26,51 +21,31 @@ export function Markdown({
 	className?: string;
 }) {
 	return (
-		<Streamdown
-			mode={streaming ? "streaming" : "static"}
+		<Words
 			isAnimating={streaming}
+			plugins={plugins}
 			components={components}
+			controls={controls}
+			lineNumbers={false}
 			className={cn("min-w-0 text-sm leading-relaxed", className)}
 		>
 			{children}
-		</Streamdown>
+		</Words>
 	);
 }
 
-const components: Components = {
-	code: ({ node, className, children, ...props }) => {
-		// Streamdown marks fenced blocks with data-block. Inline code keeps its
-		// default styling.
-		if (!("data-block" in props)) {
-			return (
-				<defaultComponents.code node={node} className={className} {...props}>
-					{children}
-				</defaultComponents.code>
-			);
-		}
-
-		const language = className?.match(/language-(\S+)/)?.[1] ?? "";
-		return <FencedCode code={String(children ?? "")} language={language} />;
-	},
+// Created once so the options stay the same between renders.
+const plugins = {
+	code: createHighlightsPlugin({
+		themes: { light: githubLight, dark: githubDark },
+		defaultColor: false,
+	}),
 };
 
-function FencedCode({ code, language }: { code: string; language: string }) {
-	const lines = useHighlightedCode(code, language);
-	const value = code.replace(/\n$/, "");
+const controls = { code: { copy: true, download: false } };
 
-	return (
-		<CodeBlock className="my-3">
-			<CodeBlockHeader>
-				<CodeBlockTitle>{language || "text"}</CodeBlockTitle>
-				<CodeBlockActions>
-					<CodeBlockCopyButton value={value} />
-				</CodeBlockActions>
-			</CodeBlockHeader>
-			<CodeBlockContent className="max-h-96">
-				{lines.map((line, index) => (
-					<CodeBlockLine key={index}>{line}</CodeBlockLine>
-				))}
-			</CodeBlockContent>
-		</CodeBlock>
-	);
-}
+// Links from model output open in a new tab.
+const components: Components = {
+	a: (html) =>
+		html.replace("<a ", '<a target="_blank" rel="noopener noreferrer" '),
+};

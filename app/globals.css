@@ -2,8 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-/* Streamdown renders its own Tailwind classes. */
-@source "../node_modules/streamdown/dist/*.js";
+@import "@pierre/words/styles.css" layer(components);
 
 @custom-variant dark (&:is(.dark *));
 
@@ -129,5 +128,45 @@
   }
   html {
     @apply font-sans;
+  }
+}
+/* Words Markdown, matched to the app's theme and to components/ui/code-block. */
+@layer components {
+  [data-markdown="a"] {
+    @apply text-primary underline-offset-2 hover:opacity-80;
+  }
+
+  [data-markdown="code"] {
+    @apply rounded-sm bg-muted font-mono;
+  }
+
+  [data-markdown="root"] :is(th, td),
+  [data-markdown="blockquote"] {
+    @apply border-border;
+  }
+
+  [data-markdown="root"] [data-markdown="code-block"] {
+    @apply my-3 rounded-lg border-input text-sm dark:bg-input/30;
+  }
+
+  [data-markdown="code-header"] {
+    @apply items-center border-0 px-3 pt-3 pb-0 font-sans text-sm font-medium text-foreground;
+  }
+
+  [data-markdown="code-header"] button {
+    @apply rounded-md px-1.5 py-0.5 text-xs font-normal text-muted-foreground hover:bg-muted hover:text-foreground;
+  }
+
+  [data-markdown="code-block"] pre {
+    @apply max-h-96 px-3 pt-2 pb-3 font-mono text-sm leading-relaxed;
+  }
+
+  /* Highlights writes both themes as custom properties. */
+  [data-markdown="code-block"] code span[style] {
+    color: var(--hls-light);
+  }
+
+  .dark [data-markdown="code-block"] code span[style] {
+    color: var(--hls-dark);
   }
 }
